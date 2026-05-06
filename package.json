@@ -8,7 +8,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@corvidlabs/ts-algochat": "^0.4.0"
+    "@corvidlabs/ts-algochat": "^0.4.0",
+    "algosdk": "^3.5.2"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0"

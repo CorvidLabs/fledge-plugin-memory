@@ -1,20 +1,8 @@
-import { sendExec, sendError, sendLog } from "./protocol.js";
+import algosdk from "algosdk";
+import { sendError, sendLog } from "./protocol.js";
 import { encryptValue, decryptValue } from "./encrypt.js";
+import { getAlgod, getIndexer, checkAlgod, getSuggestedParams, submitAndWait } from "./algorand.js";
 import type { Identity } from "./identity.js";
-
-async function checkLocalnet(): Promise<boolean> {
-  const result = await sendExec("fledge localnet status 2>/dev/null");
-  if (result.code !== 0) {
-    const check = await sendExec("which fledge 2>/dev/null && fledge localnet help 2>/dev/null");
-    if (check.code !== 0) {
-      sendError("Install fledge-plugin-localnet for on-chain memory: fledge plugins install CorvidLabs/fledge-plugin-localnet");
-    } else {
-      sendError("Localnet is not running. Start it: fledge localnet start");
-    }
-    return false;
-  }
-  return true;
-}
 
 function arc69Metadata(key: string, encryptedValue: string, userAddress: string): string {
   return JSON.stringify({
@@ -31,35 +19,60 @@ function arc69Metadata(key: string, encryptedValue: string, userAddress: string)
 }
 
 export async function mutableSave(key: string, value: string, identity: Identity): Promise<string | null> {
-  if (!await checkLocalnet()) return null;
+  if (!await checkAlgod()) {
+    sendError("Cannot reach algod. Is localnet running? Set ALGOD_URL if using a remote node.");
+    return null;
+  }
 
   const encrypted = encryptValue(value, identity);
   const metadata = arc69Metadata(key, encrypted, identity.address);
-  const metadataB64 = Buffer.from(metadata).toString("base64");
+  const note = new Uint8Array(Buffer.from(metadata));
+  const params = await getSuggestedParams();
+  const sender = algosdk.Address.fromString(identity.address);
 
   const existing = await findAsaByKey(key, identity);
   if (existing) {
-    const cmd = `goal asset config --assetid ${existing.asaId} --manager ${identity.address} --new-note "${metadataB64}" 2>&1`;
-    const result = await sendExec(cmd);
-    if (result.code !== 0) {
-      sendError(`Failed to update ASA: ${result.stderr || result.stdout}`);
-      return null;
-    }
+    const txn = algosdk.makeAssetConfigTxnWithSuggestedParamsFromObject({
+      sender,
+      assetIndex: BigInt(existing.asaId),
+      manager: sender,
+      reserve: sender,
+      freeze: sender,
+      clawback: sender,
+      suggestedParams: params,
+      note,
+      strictEmptyAddressChecking: false,
+    });
+    const signed = txn.signTxn(identity.signingKey);
+    await submitAndWait(signed);
     return existing.asaId;
   }
 
-  const cmd = `goal asset create --creator ${identity.address} --total 1 --decimals 0 --name "mem:${key}" --note "${metadataB64}" 2>&1`;
-  const result = await sendExec(cmd);
-  if (result.code !== 0) {
-    sendError(`Failed to create ASA: ${result.stderr || result.stdout}`);
-    return null;
-  }
-  const match = result.stdout.match(/Created asset with asset index (\d+)/);
-  return match ? match[1] : "unknown";
+  const txn = algosdk.makeAssetCreateTxnWithSuggestedParamsFromObject({
+    sender,
+    total: BigInt(1),
+    decimals: 0,
+    defaultFrozen: false,
+    manager: sender,
+    reserve: sender,
+    freeze: sender,
+    clawback: sender,
+    assetName: `mem:${key}`,
+    unitName: "MEM",
+    note,
+    suggestedParams: params,
+  });
+  const signed = txn.signTxn(identity.signingKey);
+  const txid = await submitAndWait(signed);
+
+  const algod = getAlgod();
+  const txInfo = await algod.pendingTransactionInformation(txid).do();
+  const assetIndex = txInfo.assetIndex;
+  return assetIndex ? String(assetIndex) : "unknown";
 }
 
 export async function mutableRecall(key: string, identity: Identity): Promise<{ key: string; value: string; asaId: string } | null> {
-  if (!await checkLocalnet()) return null;
+  if (!await checkAlgod()) return null;
 
   const entry = await findAsaByKey(key, identity);
   if (!entry || !entry.metadata) return null;
@@ -76,33 +89,56 @@ export async function mutableRecall(key: string, identity: Identity): Promise<{ 
 }
 
 export async function mutableList(identity: Identity): Promise<{ key: string; asaId: string }[]> {
-  if (!await checkLocalnet()) return [];
+  if (!await checkAlgod()) return [];
 
-  const cmd = `goal account listassets --account ${identity.address} 2>&1`;
-  const result = await sendExec(cmd);
-  if (result.code !== 0) return [];
+  try {
+    const indexer = getIndexer();
+    const result = await indexer.lookupAccountCreatedAssets(identity.address).do();
+    const assets = result.assets ?? [];
 
-  const lines = result.stdout.trim().split("\n");
-  return lines
-    .filter(l => l.includes("mem:"))
-    .map(l => {
-      const parts = l.trim().split(/\s+/);
-      const asaId = parts[0] ?? "";
-      const nameMatch = l.match(/mem:(\S+)/);
-      return { key: nameMatch?.[1] ?? "", asaId };
-    })
-    .filter(e => e.key);
+    return assets
+      .filter((a: any) => a.params?.name?.startsWith("mem:"))
+      .map((a: any) => ({
+        key: a.params.name.substring(4),
+        asaId: String(a.index),
+      }));
+  } catch {
+    try {
+      const algod = getAlgod();
+      const info = await algod.accountInformation(identity.address).do();
+      const assets = info.createdAssets ?? [];
+      return assets
+        .filter((a: any) => a.params?.name?.startsWith("mem:"))
+        .map((a: any) => ({
+          key: a.params.name.substring(4),
+          asaId: String(a.index),
+        }));
+    } catch {
+      return [];
+    }
+  }
 }
 
 export async function mutableDelete(key: string, identity: Identity): Promise<boolean> {
-  if (!await checkLocalnet()) return false;
+  if (!await checkAlgod()) return false;
 
   const entry = await findAsaByKey(key, identity);
   if (!entry) return false;
 
-  const cmd = `goal asset destroy --assetid ${entry.asaId} --creator ${identity.address} 2>&1`;
-  const result = await sendExec(cmd);
-  return result.code === 0;
+  try {
+    const params = await getSuggestedParams();
+    const sender = algosdk.Address.fromString(identity.address);
+    const txn = algosdk.makeAssetDestroyTxnWithSuggestedParamsFromObject({
+      sender,
+      assetIndex: BigInt(entry.asaId),
+      suggestedParams: params,
+    });
+    const signed = txn.signTxn(identity.signingKey);
+    await submitAndWait(signed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: string; metadata?: string } | null> {
@@ -110,16 +146,27 @@ async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: s
   const entry = list.find(e => e.key === key);
   if (!entry) return null;
 
-  const infoCmd = `goal asset info --assetid ${entry.asaId} 2>&1`;
-  const info = await sendExec(infoCmd);
-  if (info.code !== 0) return { asaId: entry.asaId };
+  try {
+    const indexer = getIndexer();
+    const txns = await indexer
+      .searchForTransactions()
+      .assetID(Number(entry.asaId))
+      .txType("acfg")
+      .limit(1)
+      .do();
 
-  const noteMatch = info.stdout.match(/Note:\s*(.+)/);
-  if (noteMatch) {
-    try {
-      const decoded = Buffer.from(noteMatch[1].trim(), "base64").toString("utf-8");
+    const latestTx = txns.transactions?.[0];
+    if (latestTx?.note) {
+      const decoded = Buffer.from(latestTx.note, "base64").toString("utf-8");
       return { asaId: entry.asaId, metadata: decoded };
-    } catch {}
-  }
+    }
+  } catch {}
+
+  try {
+    const algod = getAlgod();
+    const info = await algod.getAssetByID(Number(entry.asaId)).do();
+    return { asaId: entry.asaId };
+  } catch {}
+
   return { asaId: entry.asaId };
 }
