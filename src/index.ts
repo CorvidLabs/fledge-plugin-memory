@@ -5,13 +5,15 @@ import { mutableSave, mutableRecall, mutableList, mutableDelete } from "./mutabl
 import { permanentSave } from "./permanent.js";
 import { publicKeyToBase64, fingerprint } from "@corvidlabs/ts-algochat";
 
+type Tier = "ephemeral" | "mutable" | "permanent";
+
 interface ParsedArgs {
   command: string;
   key?: string;
   value?: string;
   query?: string;
   ttl?: number;
-  tier: "ephemeral" | "mutable" | "permanent";
+  tier?: Tier;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -20,14 +22,14 @@ function parseArgs(args: string[]): ParsedArgs {
   let value: string | undefined;
   let query: string | undefined;
   let ttl: number | undefined;
-  let tier: "ephemeral" | "mutable" | "permanent" = "ephemeral";
+  let tier: Tier | undefined;
 
   for (let i = 1; i < args.length; i++) {
     switch (args[i]) {
       case "--key": key = args[++i]; break;
       case "--value": value = args[++i]; break;
       case "--query": query = args[++i]; break;
-      case "--tier": tier = args[++i] as typeof tier; break;
+      case "--tier": tier = args[++i] as Tier; break;
       case "--ttl": ttl = parseInt(args[++i], 10); break;
     }
   }
@@ -75,7 +77,8 @@ async function cmdSave(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
     sendError("Usage: fledge memory save --key <k> --value <v> [--tier ...] [--ttl <hours>]");
     process.exit(1);
   }
-  switch (args.tier) {
+  const tier = args.tier ?? "ephemeral";
+  switch (tier) {
     case "ephemeral":
       if (!sqlReady) { sendError("SQL plugin not available for ephemeral storage."); process.exit(1); }
       await ephemeralSave(args.key, args.value, identity, args.ttl);
@@ -184,7 +187,7 @@ async function cmdPromote(args: ParsedArgs, pluginDir: string, identity: ReturnT
     process.exit(1);
   }
 
-  const targetTier = args.tier === "ephemeral" ? "mutable" : args.tier;
+  const targetTier = (!args.tier || args.tier === "ephemeral") ? "mutable" : args.tier;
   const value = await ephemeralGetRaw(args.key, identity);
   if (!value) {
     sendError(`Memory not found in ephemeral tier: ${args.key}`);
