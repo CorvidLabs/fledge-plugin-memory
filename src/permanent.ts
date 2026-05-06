@@ -1,4 +1,6 @@
 import { sendExec, sendError } from "./protocol.js";
+import { encryptValue } from "./encrypt.js";
+import type { Identity } from "./identity.js";
 
 async function checkLocalnet(): Promise<boolean> {
   const result = await sendExec("fledge localnet status 2>/dev/null");
@@ -14,12 +16,20 @@ async function checkLocalnet(): Promise<boolean> {
   return true;
 }
 
-export async function permanentSave(key: string, value: string): Promise<string | null> {
+export async function permanentSave(key: string, value: string, identity: Identity): Promise<string | null> {
   if (!await checkLocalnet()) return null;
-  const note = JSON.stringify({ key, value, type: "permanent-memory", created: new Date().toISOString() });
+
+  const encrypted = encryptValue(value, identity);
+  const note = JSON.stringify({
+    key,
+    value: encrypted,
+    type: "permanent-memory",
+    user: identity.address,
+    created: new Date().toISOString(),
+  });
   const noteB64 = Buffer.from(note).toString("base64");
-  const account = `$(docker exec algokit_algod goal account list | head -1 | awk '{print $2}')`;
-  const cmd = `docker exec algokit_algod goal clerk send -a 0 -f ${account} -t ${account} --note "${noteB64}" 2>&1`;
+
+  const cmd = `goal clerk send -a 0 -f ${identity.address} -t ${identity.address} --note "${noteB64}" 2>&1`;
   const result = await sendExec(cmd);
   if (result.code !== 0) {
     sendError(`Failed to save permanent memory: ${result.stderr || result.stdout}`);

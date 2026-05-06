@@ -1,168 +1,142 @@
-import { sendExec, sendStore, sendLoad, sendLog } from "./protocol.js";
+import { sendExec, sendLog } from "./protocol.js";
+import { encryptValue, decryptValue } from "./encrypt.js";
+import type { Identity } from "./identity.js";
 
-let dbPath: string | null = null;
+const DEFAULT_TTL_HOURS = 168; // 7 days
 let initialized = false;
 
-async function resolveDbPath(pluginDir: string): Promise<string> {
-  if (dbPath) return dbPath;
-  const result = await sendExec("echo $PWD");
-  const projectRoot = result.stdout.trim() || ".";
-  dbPath = `${projectRoot}/.fledge/data.db`;
-  return dbPath;
-}
+export async function ensureEphemeral(pluginDir: string): Promise<boolean> {
+  if (initialized) return true;
 
-async function ensureInitialized(pluginDir: string): Promise<void> {
-  if (initialized) return;
-  const db = await resolveDbPath(pluginDir);
-
-  const checkSqlite = await sendExec("which sqlite3 2>/dev/null");
-  if (checkSqlite.code !== 0) {
-    sendLog("warn", "sqlite3 not found. Ephemeral tier using fallback store (64KB limit, 256 keys max).");
-    dbPath = null;
-    initialized = true;
-    return;
+  const sqlCheck = await sendExec("fledge sql help 2>/dev/null");
+  if (sqlCheck.code !== 0) {
+    sendLog("warn", "fledge-plugin-sql not available. Install: fledge plugins install CorvidLabs/fledge-plugin-sql");
+    return false;
   }
 
-  await sendExec(`mkdir -p "$(dirname '${db}')" && sqlite3 '${db}' 'SELECT 1' >/dev/null 2>&1`);
-
-  const migrationFile = `${pluginDir}/migrations/001_memories.sql`;
-  const checkFile = await sendExec(`test -f '${migrationFile}' && echo yes || echo no`);
-  if (checkFile.stdout.trim() === "yes") {
-    await sendExec(`sqlite3 '${db}' < '${migrationFile}' 2>/dev/null || true`);
-  } else {
-    await sendExec(`sqlite3 '${db}' "CREATE TABLE IF NOT EXISTS memories (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))); CREATE INDEX IF NOT EXISTS idx_memories_value ON memories(value);"`);
-  }
+  await sendExec("fledge sql init --path .fledge/data.db 2>/dev/null");
+  await sendExec(`fledge sql migrate --dir '${pluginDir}/migrations'`);
 
   initialized = true;
-}
-
-function usingSql(): boolean {
-  return dbPath !== null;
-}
-
-async function fallbackSave(key: string, value: string): Promise<void> {
-  const data = await loadFallbackStore();
-  data[key] = { value, updated_at: new Date().toISOString() };
-  sendStore("memories", JSON.stringify(data));
-}
-
-async function fallbackRecall(key: string): Promise<{ key: string; value: string; updated_at: string } | null> {
-  const data = await loadFallbackStore();
-  const entry = data[key];
-  if (!entry) return null;
-  return { key, value: entry.value, updated_at: entry.updated_at };
-}
-
-async function fallbackList(): Promise<{ key: string; value: string; updated_at: string }[]> {
-  const data = await loadFallbackStore();
-  return Object.entries(data).map(([key, entry]) => ({
-    key,
-    value: (entry as { value: string; updated_at: string }).value,
-    updated_at: (entry as { value: string; updated_at: string }).updated_at,
-  }));
-}
-
-async function fallbackDelete(key: string): Promise<boolean> {
-  const data = await loadFallbackStore();
-  if (!(key in data)) return false;
-  delete data[key];
-  sendStore("memories", JSON.stringify(data));
   return true;
-}
-
-async function fallbackSearch(query: string): Promise<{ key: string; value: string; updated_at: string }[]> {
-  const data = await loadFallbackStore();
-  const q = query.toLowerCase();
-  return Object.entries(data)
-    .filter(([key, entry]) =>
-      key.toLowerCase().includes(q) ||
-      (entry as { value: string }).value.toLowerCase().includes(q)
-    )
-    .map(([key, entry]) => ({
-      key,
-      value: (entry as { value: string; updated_at: string }).value,
-      updated_at: (entry as { value: string; updated_at: string }).updated_at,
-    }));
-}
-
-async function loadFallbackStore(): Promise<Record<string, { value: string; updated_at: string }>> {
-  const raw = await sendLoad("memories");
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
 }
 
 function escSql(s: string): string {
   return s.replace(/'/g, "''");
 }
 
-async function sqlSave(key: string, value: string): Promise<void> {
-  const sql = `INSERT OR REPLACE INTO memories (key, value, created_at, updated_at) VALUES ('${escSql(key)}', '${escSql(value)}', COALESCE((SELECT created_at FROM memories WHERE key='${escSql(key)}'), datetime('now')), datetime('now'))`;
-  await sendExec(`sqlite3 '${dbPath}' "${sql}"`);
+async function fledgeSqlQuery(sql: string): Promise<string> {
+  const result = await sendExec(`fledge sql query --list ${JSON.stringify(sql)}`);
+  return result.stdout.trim();
 }
 
-async function sqlRecall(key: string): Promise<{ key: string; value: string; updated_at: string } | null> {
-  const result = await sendExec(`sqlite3 -separator '|' '${dbPath}' "SELECT key, value, updated_at FROM memories WHERE key='${escSql(key)}'"`);
-  if (result.code !== 0 || !result.stdout.trim()) return null;
-  const line = result.stdout.trim().split("\n")[0];
-  const parts = line.split("|");
-  if (parts.length < 3) return null;
-  return { key: parts[0], value: parts.slice(1, -1).join("|"), updated_at: parts[parts.length - 1] };
+export async function ephemeralSave(
+  key: string,
+  value: string,
+  identity: Identity,
+  ttlHours?: number,
+): Promise<void> {
+  const encrypted = encryptValue(value, identity);
+  const ttl = ttlHours ?? DEFAULT_TTL_HOURS;
+  const expiresAt = `datetime('now', '+${ttl} hours')`;
+
+  await fledgeSqlQuery(
+    `INSERT OR REPLACE INTO memories (key, value, user_address, created_at, updated_at, expires_at) ` +
+    `VALUES ('${escSql(key)}', '${escSql(encrypted)}', '${escSql(identity.address)}', ` +
+    `COALESCE((SELECT created_at FROM memories WHERE key='${escSql(key)}' AND user_address='${escSql(identity.address)}'), datetime('now')), ` +
+    `datetime('now'), ${expiresAt})`
+  );
 }
 
-async function sqlList(): Promise<{ key: string; value: string; updated_at: string }[]> {
-  const result = await sendExec(`sqlite3 -separator '|' '${dbPath}' "SELECT key, value, updated_at FROM memories ORDER BY updated_at DESC"`);
-  if (result.code !== 0 || !result.stdout.trim()) return [];
-  return result.stdout.trim().split("\n").map(line => {
+export async function ephemeralRecall(
+  key: string,
+  identity: Identity,
+): Promise<{ key: string; value: string; updated_at: string; expires_at: string | null } | null> {
+  await cleanExpired(identity);
+
+  const output = await fledgeSqlQuery(
+    `SELECT key, value, updated_at, expires_at FROM memories ` +
+    `WHERE key='${escSql(key)}' AND user_address='${escSql(identity.address)}'`
+  );
+  if (!output) return null;
+
+  const parts = output.split("|");
+  if (parts.length < 4) return null;
+
+  try {
+    const decrypted = decryptValue(parts[1], identity);
+    return { key: parts[0], value: decrypted, updated_at: parts[2], expires_at: parts[3] || null };
+  } catch {
+    return null;
+  }
+}
+
+export async function ephemeralList(
+  identity: Identity,
+): Promise<{ key: string; value: string; updated_at: string; expires_at: string | null }[]> {
+  await cleanExpired(identity);
+
+  const output = await fledgeSqlQuery(
+    `SELECT key, value, updated_at, expires_at FROM memories ` +
+    `WHERE user_address='${escSql(identity.address)}' ORDER BY updated_at DESC`
+  );
+  if (!output) return [];
+
+  return output.split("\n").map(line => {
     const parts = line.split("|");
-    if (parts.length < 3) return null;
-    return { key: parts[0], value: parts.slice(1, -1).join("|"), updated_at: parts[parts.length - 1] };
-  }).filter((e): e is NonNullable<typeof e> => e !== null && e.key !== "");
+    if (parts.length < 4) return null;
+    try {
+      const decrypted = decryptValue(parts[1], identity);
+      return { key: parts[0], value: decrypted, updated_at: parts[2], expires_at: parts[3] || null };
+    } catch {
+      return null;
+    }
+  }).filter((e): e is NonNullable<typeof e> => e !== null);
 }
 
-async function sqlDelete(key: string): Promise<boolean> {
-  const check = await sqlRecall(key);
+export async function ephemeralDelete(
+  key: string,
+  identity: Identity,
+): Promise<boolean> {
+  const check = await ephemeralRecall(key, identity);
   if (!check) return false;
-  await sendExec(`sqlite3 '${dbPath}' "DELETE FROM memories WHERE key='${escSql(key)}'"`);
+  await fledgeSqlQuery(
+    `DELETE FROM memories WHERE key='${escSql(key)}' AND user_address='${escSql(identity.address)}'`
+  );
   return true;
 }
 
-async function sqlSearch(query: string): Promise<{ key: string; value: string; updated_at: string }[]> {
-  const escaped = escSql(query);
-  const result = await sendExec(`sqlite3 -separator '|' '${dbPath}' "SELECT key, value, updated_at FROM memories WHERE key LIKE '%${escaped}%' OR value LIKE '%${escaped}%' ORDER BY updated_at DESC"`);
-  if (result.code !== 0 || !result.stdout.trim()) return [];
-  return result.stdout.trim().split("\n").map(line => {
-    const parts = line.split("|");
-    if (parts.length < 3) return null;
-    return { key: parts[0], value: parts.slice(1, -1).join("|"), updated_at: parts[parts.length - 1] };
-  }).filter((e): e is NonNullable<typeof e> => e !== null && e.key !== "");
+export async function ephemeralSearch(
+  query: string,
+  identity: Identity,
+): Promise<{ key: string; value: string; updated_at: string }[]> {
+  await cleanExpired(identity);
+
+  const all = await ephemeralList(identity);
+  const q = query.toLowerCase();
+  return all.filter(m =>
+    m.key.toLowerCase().includes(q) || m.value.toLowerCase().includes(q)
+  );
 }
 
-export async function ephemeralSave(key: string, value: string, pluginDir: string): Promise<void> {
-  await ensureInitialized(pluginDir);
-  if (usingSql()) await sqlSave(key, value);
-  else await fallbackSave(key, value);
+export async function ephemeralGetRaw(
+  key: string,
+  identity: Identity,
+): Promise<string | null> {
+  const output = await fledgeSqlQuery(
+    `SELECT value FROM memories WHERE key='${escSql(key)}' AND user_address='${escSql(identity.address)}'`
+  );
+  if (!output) return null;
+  try {
+    return decryptValue(output.trim(), identity);
+  } catch {
+    return null;
+  }
 }
 
-export async function ephemeralRecall(key: string, pluginDir: string): Promise<{ key: string; value: string; updated_at: string } | null> {
-  await ensureInitialized(pluginDir);
-  return usingSql() ? sqlRecall(key) : fallbackRecall(key);
-}
-
-export async function ephemeralList(pluginDir: string): Promise<{ key: string; value: string; updated_at: string }[]> {
-  await ensureInitialized(pluginDir);
-  return usingSql() ? sqlList() : fallbackList();
-}
-
-export async function ephemeralDelete(key: string, pluginDir: string): Promise<boolean> {
-  await ensureInitialized(pluginDir);
-  return usingSql() ? sqlDelete(key) : fallbackDelete(key);
-}
-
-export async function ephemeralSearch(query: string, pluginDir: string): Promise<{ key: string; value: string; updated_at: string }[]> {
-  await ensureInitialized(pluginDir);
-  return usingSql() ? sqlSearch(query) : fallbackSearch(query);
+async function cleanExpired(identity: Identity): Promise<void> {
+  await fledgeSqlQuery(
+    `DELETE FROM memories WHERE user_address='${escSql(identity.address)}' ` +
+    `AND expires_at IS NOT NULL AND expires_at < datetime('now')`
+  );
 }

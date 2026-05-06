@@ -1,4 +1,6 @@
-import { sendExec, sendError } from "./protocol.js";
+import { sendExec, sendError, sendLog } from "./protocol.js";
+import { encryptValue, decryptValue } from "./encrypt.js";
+import type { Identity } from "./identity.js";
 
 async function checkLocalnet(): Promise<boolean> {
   const result = await sendExec("fledge localnet status 2>/dev/null");
@@ -14,11 +16,39 @@ async function checkLocalnet(): Promise<boolean> {
   return true;
 }
 
-export async function mutableSave(key: string, value: string): Promise<string | null> {
+function arc69Metadata(key: string, encryptedValue: string, userAddress: string): string {
+  return JSON.stringify({
+    standard: "arc69",
+    description: `mem:${key}`,
+    properties: {
+      type: "memory",
+      key,
+      value: encryptedValue,
+      user: userAddress,
+      updated: new Date().toISOString(),
+    },
+  });
+}
+
+export async function mutableSave(key: string, value: string, identity: Identity): Promise<string | null> {
   if (!await checkLocalnet()) return null;
-  const metadata = JSON.stringify({ key, value, type: "memory", updated: new Date().toISOString() });
+
+  const encrypted = encryptValue(value, identity);
+  const metadata = arc69Metadata(key, encrypted, identity.address);
   const metadataB64 = Buffer.from(metadata).toString("base64");
-  const cmd = `docker exec algokit_algod goal asset create --creator $(docker exec algokit_algod goal account list | head -1 | awk '{print $2}') --total 1 --decimals 0 --name "mem:${key}" --note "${metadataB64}" 2>&1`;
+
+  const existing = await findAsaByKey(key, identity);
+  if (existing) {
+    const cmd = `goal asset config --assetid ${existing.asaId} --manager ${identity.address} --new-note "${metadataB64}" 2>&1`;
+    const result = await sendExec(cmd);
+    if (result.code !== 0) {
+      sendError(`Failed to update ASA: ${result.stderr || result.stdout}`);
+      return null;
+    }
+    return existing.asaId;
+  }
+
+  const cmd = `goal asset create --creator ${identity.address} --total 1 --decimals 0 --name "mem:${key}" --note "${metadataB64}" 2>&1`;
   const result = await sendExec(cmd);
   if (result.code !== 0) {
     sendError(`Failed to create ASA: ${result.stderr || result.stdout}`);
@@ -28,11 +58,30 @@ export async function mutableSave(key: string, value: string): Promise<string | 
   return match ? match[1] : "unknown";
 }
 
-export async function mutableList(): Promise<{ key: string; asaId: string }[]> {
+export async function mutableRecall(key: string, identity: Identity): Promise<{ key: string; value: string; asaId: string } | null> {
+  if (!await checkLocalnet()) return null;
+
+  const entry = await findAsaByKey(key, identity);
+  if (!entry || !entry.metadata) return null;
+
+  try {
+    const meta = JSON.parse(entry.metadata);
+    const encrypted = meta.properties?.value;
+    if (!encrypted) return null;
+    const decrypted = decryptValue(encrypted, identity);
+    return { key, value: decrypted, asaId: entry.asaId };
+  } catch {
+    return null;
+  }
+}
+
+export async function mutableList(identity: Identity): Promise<{ key: string; asaId: string }[]> {
   if (!await checkLocalnet()) return [];
-  const cmd = `docker exec algokit_algod goal account listassets --account $(docker exec algokit_algod goal account list | head -1 | awk '{print $2}') 2>&1`;
+
+  const cmd = `goal account listassets --account ${identity.address} 2>&1`;
   const result = await sendExec(cmd);
   if (result.code !== 0) return [];
+
   const lines = result.stdout.trim().split("\n");
   return lines
     .filter(l => l.includes("mem:"))
@@ -45,12 +94,32 @@ export async function mutableList(): Promise<{ key: string; asaId: string }[]> {
     .filter(e => e.key);
 }
 
-export async function mutableDelete(key: string): Promise<boolean> {
+export async function mutableDelete(key: string, identity: Identity): Promise<boolean> {
   if (!await checkLocalnet()) return false;
-  const list = await mutableList();
-  const entry = list.find(e => e.key === key);
+
+  const entry = await findAsaByKey(key, identity);
   if (!entry) return false;
-  const cmd = `docker exec algokit_algod goal asset destroy --assetid ${entry.asaId} --creator $(docker exec algokit_algod goal account list | head -1 | awk '{print $2}') 2>&1`;
+
+  const cmd = `goal asset destroy --assetid ${entry.asaId} --creator ${identity.address} 2>&1`;
   const result = await sendExec(cmd);
   return result.code === 0;
+}
+
+async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: string; metadata?: string } | null> {
+  const list = await mutableList(identity);
+  const entry = list.find(e => e.key === key);
+  if (!entry) return null;
+
+  const infoCmd = `goal asset info --assetid ${entry.asaId} 2>&1`;
+  const info = await sendExec(infoCmd);
+  if (info.code !== 0) return { asaId: entry.asaId };
+
+  const noteMatch = info.stdout.match(/Note:\s*(.+)/);
+  if (noteMatch) {
+    try {
+      const decoded = Buffer.from(noteMatch[1].trim(), "base64").toString("utf-8");
+      return { asaId: entry.asaId, metadata: decoded };
+    } catch {}
+  }
+  return { asaId: entry.asaId };
 }
