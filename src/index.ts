@@ -17,6 +17,12 @@ interface ParsedArgs {
   json: boolean;
 }
 
+const VALID_KEY_RE = /^[a-zA-Z0-9_\-.:]+$/;
+
+function validateKey(key: string): boolean {
+  return VALID_KEY_RE.test(key) && key.length <= 256;
+}
+
 function parseArgs(args: string[]): ParsedArgs {
   const command = args[0] ?? "help";
   let key: string | undefined;
@@ -36,6 +42,12 @@ function parseArgs(args: string[]): ParsedArgs {
       case "--json": json = true; break;
     }
   }
+
+  if (key && !validateKey(key)) {
+    sendError("Invalid key: must be alphanumeric, hyphens, underscores, dots, colons (max 256 chars)");
+    process.exit(1);
+  }
+
   return { command, key, value, query, ttl, tier, json };
 }
 
