@@ -92,22 +92,32 @@ export async function mutableRecall(key: string, identity: Identity): Promise<{ 
 export async function mutableList(identity: Identity): Promise<{ key: string; asaId: string }[]> {
   if (!await checkAlgod()) return [];
 
+  // Prefer algod (real-time) over indexer (1-3s lag) for finding our created
+  // ASAs. Otherwise rapid back-to-back `save` calls race the indexer and
+  // create duplicate ASAs for the same key.
   try {
-    const indexer = getIndexer();
-    const result = await indexer.lookupAccountCreatedAssets(identity.address).do();
-    const assets = result.assets ?? [];
-
-    return assets
+    const algod = getAlgod();
+    const info = await algod.accountInformation(identity.address).do();
+    const assets = (info.createdAssets ?? info["created-assets"] ?? []) as any[];
+    const out = assets
       .filter((a: any) => a.params?.name?.startsWith("mem:"))
       .map((a: any) => ({
         key: a.params.name.substring(4),
         asaId: String(a.index),
       }));
+    // If a key was duplicated by an earlier race, keep the lowest ASA id —
+    // that's the original record; later acfg writes against it still work.
+    const byKey = new Map<string, { key: string; asaId: string }>();
+    for (const e of out) {
+      const cur = byKey.get(e.key);
+      if (!cur || BigInt(e.asaId) < BigInt(cur.asaId)) byKey.set(e.key, e);
+    }
+    return Array.from(byKey.values());
   } catch {
     try {
-      const algod = getAlgod();
-      const info = await algod.accountInformation(identity.address).do();
-      const assets = info.createdAssets ?? [];
+      const indexer = getIndexer();
+      const result = await indexer.lookupAccountCreatedAssets(identity.address).do();
+      const assets = result.assets ?? [];
       return assets
         .filter((a: any) => a.params?.name?.startsWith("mem:"))
         .map((a: any) => ({
@@ -155,8 +165,16 @@ async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: s
       .txType("acfg")
       .do();
 
-    const allTxns = txns.transactions ?? [];
-    const latestTx = allTxns[allTxns.length - 1];
+    // ARC-69 says "the most recent acfg note wins". The indexer's default
+    // order is ascending by confirmed-round, but we don't rely on that —
+    // sort explicitly so reads are correct regardless of which way the
+    // indexer feels like ordering today.
+    const allTxns = (txns.transactions ?? []).slice().sort((a: any, b: any) => {
+      const ra = Number(a.confirmedRound ?? a["confirmed-round"] ?? 0);
+      const rb = Number(b.confirmedRound ?? b["confirmed-round"] ?? 0);
+      return rb - ra;
+    });
+    const latestTx = allTxns[0];
     if (latestTx?.note) {
       const decoded = Buffer.from(latestTx.note as unknown as string, "base64").toString("utf-8");
       return { asaId: entry.asaId, metadata: decoded };

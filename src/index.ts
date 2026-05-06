@@ -2,7 +2,7 @@ import { recvJson, sendOutput, sendError, type InitMessage } from "./protocol.js
 import { getOrCreateIdentity, initIdentityStorage } from "./identity.js";
 import { ensureEphemeral, ephemeralSave, ephemeralRecall, ephemeralList, ephemeralDelete, ephemeralSearch, ephemeralGetRaw } from "./ephemeral.js";
 import { mutableSave, mutableRecall, mutableList, mutableDelete } from "./mutable.js";
-import { permanentSave } from "./permanent.js";
+import { permanentSave, permanentRecall, permanentList } from "./permanent.js";
 import { publicKeyToBase64, fingerprint } from "@corvidlabs/ts-algochat";
 
 type Tier = "ephemeral" | "mutable" | "permanent";
@@ -182,6 +182,16 @@ async function cmdRecall(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
       return;
     }
 
+    const pResult = await permanentRecall(args.key, identity);
+    if (pResult) {
+      if (args.json) {
+        sendJson({ key: pResult.key, value: pResult.value, tier: "permanent", txid: pResult.txid, created: pResult.created });
+      } else {
+        sendOutput(`[permanent] ${pResult.key} = ${pResult.value} (tx: ${pResult.txid})`);
+      }
+      return;
+    }
+
     if (args.json) {
       sendJson({ error: "not_found", key: args.key });
     } else {
@@ -194,7 +204,8 @@ async function cmdRecall(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
 async function cmdList(args: ParsedArgs, identity: ReturnType<typeof getOrCreateIdentity> extends Promise<infer T> ? T : never, sqlReady: boolean) {
   const showEphemeral = args.tier === "ephemeral" || !args.tier;
   const showMutable = args.tier === "mutable" || !args.tier;
-  const memories: { key: string; tier: string; updated_at?: string; expires_at?: string | null; asaId?: string }[] = [];
+  const showPermanent = args.tier === "permanent" || !args.tier;
+  const memories: { key: string; tier: string; updated_at?: string; expires_at?: string | null; asaId?: string; txid?: string; created?: string }[] = [];
 
   if (showEphemeral && sqlReady) {
     const items = await ephemeralList(identity);
@@ -206,6 +217,12 @@ async function cmdList(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
     const items = await mutableList(identity);
     for (const item of items) {
       memories.push({ key: item.key, tier: "mutable", asaId: item.asaId });
+    }
+  }
+  if (showPermanent) {
+    const items = await permanentList(identity);
+    for (const item of items) {
+      memories.push({ key: item.key, tier: "permanent", txid: item.txid, created: item.created });
     }
   }
 
