@@ -1,6 +1,6 @@
 # fledge-plugin-memory
 
-Three-tier memory plugin for [fledge](https://github.com/CorvidLabs/fledge).
+Three-tier encrypted memory plugin for [fledge](https://github.com/CorvidLabs/fledge). Store agent memories in SQLite (ephemeral), ARC-69 ASAs (mutable), or immutable Algorand transactions (permanent).
 
 ## Install
 
@@ -10,14 +10,68 @@ fledge plugins install CorvidLabs/fledge-plugin-memory
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `fledge memory save --key <k> --value <v> [--tier ...]` | Save a memory |
-| `fledge memory recall --key <k>` or `--query <q>` | Retrieve memories |
-| `fledge memory list [--tier ...]` | List memories |
-| `fledge memory delete --key <k>` | Delete (ephemeral/mutable) |
-| `fledge memory promote --key <k> [--tier ...]` | Promote to higher tier |
-| `fledge memory identity` | Show wallet address and encryption key |
+### `fledge memory identity`
+
+Show wallet address and encryption key fingerprint.
+
+```
+$ fledge memory identity --json
+{"address":"PZZCVTTZ...","publicKey":"xSlL38...","fingerprint":"FC36 727E 1041 C3BF"}
+```
+
+### `fledge memory save --key <k> --value <v> [--tier ...] [--ttl <hours>]`
+
+Save a memory. Defaults to ephemeral tier with 7-day TTL.
+
+```
+$ fledge memory save --key user.name --value "Leif" --json
+{"ok":true,"tier":"ephemeral","key":"user.name","ttl":168}
+
+$ fledge memory save --key agent.role --value "Lead coordinator" --tier mutable --json
+{"ok":true,"tier":"mutable","key":"agent.role","asaId":"115320"}
+
+$ fledge memory save --key founding.date --value "2026-01-15" --tier permanent --json
+{"ok":true,"tier":"permanent","key":"founding.date","txid":"DGADHO..."}
+```
+
+### `fledge memory recall --key <k>` or `--query <q>`
+
+Retrieve a memory by exact key or fuzzy search.
+
+```
+$ fledge memory recall --key user.name --json
+{"key":"user.name","value":"Leif","tier":"ephemeral","updated_at":"2026-05-06T18:22:30Z"}
+
+$ fledge memory recall --query "user" --json
+[{"key":"user.name","value":"Leif","tier":"ephemeral"},{"key":"user.role","value":"developer","tier":"ephemeral"}]
+```
+
+### `fledge memory list [--tier ...]`
+
+List all memories, optionally filtered by tier.
+
+```
+$ fledge memory list --json
+{"memories":[{"key":"user.name","tier":"ephemeral"},{"key":"agent.role","tier":"mutable","asaId":"115320"}]}
+```
+
+### `fledge memory delete --key <k>`
+
+Delete a memory. Works for ephemeral (SQLite row) and mutable (ASA destruction). Permanent memories cannot be deleted.
+
+```
+$ fledge memory delete --key user.name --json
+{"ok":true,"key":"user.name","tier":"ephemeral"}
+```
+
+### `fledge memory promote --key <k> [--tier ...]`
+
+Promote a memory to a higher tier (e.g., ephemeral to mutable).
+
+```
+$ fledge memory promote --key important.fact --tier mutable --json
+{"ok":true,"key":"important.fact","from":"ephemeral","to":"mutable","asaId":"115322"}
+```
 
 ## Memory Tiers
 
@@ -51,7 +105,7 @@ Your wallet identity (address + encryption keys) is stored in `.fledge/memory-id
 
 When saving to mutable or permanent tiers, the plugin auto-funds the wallet via KMD if the balance is insufficient.
 
-## Remote Localnet (socat)
+## Exposing Localnet to Remote Agents (socat)
 
 If the Algorand localnet runs on a different machine (e.g., a host providing Docker to a sandboxed agent), bridge the ports with socat:
 
@@ -75,3 +129,19 @@ export KMD_URL=http://<host-ip>:4002
 - All sensitive state (private keys, mnemonics) is stored with file mode `0600` (owner-read-only).
 - Memory keys are validated against a strict allowlist (`a-zA-Z0-9_-.:`, max 256 chars) to prevent injection.
 - Memory values are encrypted with ChaCha20-Poly1305 before storage (ephemeral tier) or on-chain submission (mutable/permanent tiers).
+
+## Prerequisites
+
+- `fledge-plugin-sql` (for ephemeral tier)
+- `fledge-plugin-localnet` or remote Algorand node (for mutable/permanent tiers)
+
+## Development
+
+```bash
+bun install
+bun test
+```
+
+## License
+
+MIT
