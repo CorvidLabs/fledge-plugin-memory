@@ -78,6 +78,28 @@ describe("self-encryption round-trip", () => {
     expect(result).toBeNull();
   });
 
+  it("rejects tampered ciphertext (MAC integrity)", () => {
+    const kp = generateEphemeralKeyPair();
+    const plaintext = "tamper test";
+
+    const envelope = encryptMessage(plaintext, kp.publicKey, kp.publicKey);
+    const encoded = new Uint8Array(encodeEnvelope(envelope));
+
+    // Flip a byte in the ciphertext portion (past the header)
+    const tampered = new Uint8Array(encoded);
+    tampered[tampered.length - 5] ^= 0xff;
+
+    let result: ReturnType<typeof decryptMessage> | null = null;
+    try {
+      const decoded = decodeEnvelope(tampered);
+      result = decryptMessage(decoded, kp.privateKey, kp.publicKey);
+    } catch {
+      result = null;
+    }
+
+    expect(result).toBeNull();
+  });
+
   it("produces different ciphertext for same plaintext", () => {
     const kp = generateEphemeralKeyPair();
     const plaintext = "same message";

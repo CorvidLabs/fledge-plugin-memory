@@ -50,7 +50,7 @@ export async function getOrCreateIdentity(): Promise<Identity> {
     privateKey: publicKeyToBase64(identity.privateKey),
   }, null, 2);
 
-  const escaped = data.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
+  const escaped = data.replace(/'/g, "'\\''");
   const filePath = identityFilePath();
   await sendExec(`mkdir -p '${projectRoot}/.fledge' && printf '%s' '${escaped}' > '${filePath}' && chmod 600 '${filePath}'`);
 
