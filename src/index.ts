@@ -2,7 +2,7 @@ import { recvJson, sendOutput, sendError, type InitMessage } from "./protocol.js
 import { getOrCreateIdentity, initIdentityStorage } from "./identity.js";
 import { ensureEphemeral, ephemeralSave, ephemeralRecall, ephemeralList, ephemeralDelete, ephemeralSearch, ephemeralGetRaw } from "./ephemeral.js";
 import { mutableSave, mutableRecall, mutableList, mutableDelete } from "./mutable.js";
-import { permanentSave, permanentRecall, permanentList } from "./permanent.js";
+import { permanentSave, permanentRecall, permanentList, permanentDelete } from "./permanent.js";
 import { publicKeyToBase64, fingerprint } from "@corvidlabs/ts-algochat";
 
 type Tier = "ephemeral" | "mutable" | "permanent";
@@ -246,12 +246,9 @@ async function cmdDelete(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     sendError("Usage: fledge memory delete --key <k>");
     process.exit(1);
   }
-  if (args.tier === "permanent") {
-    sendError("Permanent memories cannot be deleted.");
-    process.exit(1);
-  }
   let deleted = false;
   let fromTier = "";
+  let tombstoneTxid: string | null = null;
   if ((args.tier === "ephemeral" || !args.tier) && sqlReady) {
     deleted = await ephemeralDelete(args.key, identity);
     if (deleted) fromTier = "ephemeral";
@@ -260,9 +257,21 @@ async function cmdDelete(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     deleted = await mutableDelete(args.key, identity);
     if (deleted) fromTier = "mutable";
   }
+  if (!deleted && args.tier === "permanent") {
+    // Tombstone the permanent record. The original tx remains on-chain
+    // (that's what "permanent" means), but a follow-up tx with a
+    // tombstone note tells scanPermanent to treat the key as deleted.
+    tombstoneTxid = await permanentDelete(args.key, identity);
+    if (tombstoneTxid) {
+      deleted = true;
+      fromTier = "permanent";
+    }
+  }
   if (deleted) {
     if (args.json) {
-      sendJson({ ok: true, key: args.key, tier: fromTier });
+      sendJson(tombstoneTxid
+        ? { ok: true, key: args.key, tier: fromTier, tombstoneTxid }
+        : { ok: true, key: args.key, tier: fromTier });
     } else {
       sendOutput(`Deleted from ${fromTier}: ${args.key}`);
     }

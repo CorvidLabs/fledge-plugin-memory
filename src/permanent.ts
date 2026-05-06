@@ -42,21 +42,21 @@ export async function permanentSave(key: string, value: string, identity: Identi
   return txid;
 }
 
+const PERMANENT_TOMBSTONE = "permanent-memory-tombstone";
+
 interface PermanentEntry {
   key: string;
   value: string;
   txid: string;
   created: string;
   round: number;
+  tombstone: boolean;
 }
 
-async function scanPermanent(identity: Identity): Promise<PermanentEntry[]> {
+async function scanPermanentRaw(identity: Identity): Promise<PermanentEntry[]> {
   if (!await checkAlgod()) return [];
   try {
     const indexer = getIndexer();
-    // Self-payments to/from this address. Note that filtering by `txType=pay`
-    // already narrows search; we filter in code for amount=0 + matching note
-    // shape because the indexer doesn't expose a note-content predicate.
     const result = await indexer
       .searchForTransactions()
       .address(identity.address)
@@ -78,14 +78,18 @@ async function scanPermanent(identity: Identity): Promise<PermanentEntry[]> {
       try {
         const decoded = Buffer.from(noteB64 as unknown as string, "base64").toString("utf-8");
         const meta = JSON.parse(decoded);
-        if (meta.type !== PERMANENT_TYPE || typeof meta.key !== "string") continue;
-        const decrypted = decryptValue(meta.value, identity);
+        const isData = meta.type === PERMANENT_TYPE;
+        const isTombstone = meta.type === PERMANENT_TOMBSTONE;
+        if (!isData && !isTombstone) continue;
+        if (typeof meta.key !== "string") continue;
+        const value = isData ? decryptValue(meta.value, identity) : "";
         entries.push({
           key: meta.key,
-          value: decrypted,
+          value,
           txid: tx.id,
           created: meta.created ?? "",
           round: Number(tx.confirmedRound ?? tx["confirmed-round"] ?? 0),
+          tombstone: isTombstone,
         });
       } catch {
         // Ignore tx whose note isn't a valid permanent-memory envelope.
@@ -97,23 +101,89 @@ async function scanPermanent(identity: Identity): Promise<PermanentEntry[]> {
   }
 }
 
-export async function permanentRecall(key: string, identity: Identity): Promise<{ key: string; value: string; txid: string; created: string } | null> {
-  const all = await scanPermanent(identity);
-  // Permanent is append-only and immutable per-record, but a key may be
-  // saved more than once — pick the most recent confirmed round.
-  const matches = all.filter(e => e.key === key).sort((a, b) => b.round - a.round);
-  if (matches.length === 0) return null;
-  const latest = matches[0];
-  return { key: latest.key, value: latest.value, txid: latest.txid, created: latest.created };
-}
-
-export async function permanentList(identity: Identity): Promise<{ key: string; txid: string; created: string }[]> {
-  const all = await scanPermanent(identity);
-  // Dedupe by key (latest entry per key wins).
+// Returns the live (non-tombstoned) permanent entries, with retry to
+// accommodate indexer lag. Caller can pass a `lookingFor` key to widen
+// the retry — if we expect a specific key and don't see it yet, retry;
+// if no expected key, return whatever is there even if empty.
+async function scanPermanent(
+  identity: Identity,
+  opts: { lookingFor?: string; expectTombstoneFor?: string; retries?: number } = {},
+): Promise<PermanentEntry[]> {
+  const retries = opts.retries ?? 8;
+  let raw: PermanentEntry[] = [];
+  for (let attempt = 0; attempt < Math.max(retries, 1); attempt++) {
+    raw = await scanPermanentRaw(identity);
+    let satisfied = true;
+    if (opts.lookingFor) {
+      satisfied = raw.some(e => e.key === opts.lookingFor && !e.tombstone);
+    }
+    if (opts.expectTombstoneFor) {
+      satisfied = raw.some(e => e.key === opts.expectTombstoneFor && e.tombstone);
+    }
+    if (satisfied) break;
+    if (attempt < retries - 1) await new Promise(r => setTimeout(r, 2500));
+  }
+  // For each key, the latest-round entry wins. If that latest is a
+  // tombstone, the key is logically deleted.
   const byKey = new Map<string, PermanentEntry>();
-  for (const e of all) {
+  for (const e of raw) {
     const cur = byKey.get(e.key);
     if (!cur || e.round > cur.round) byKey.set(e.key, e);
   }
-  return Array.from(byKey.values()).map(e => ({ key: e.key, txid: e.txid, created: e.created }));
+  return Array.from(byKey.values()).filter(e => !e.tombstone);
+}
+
+export async function permanentRecall(key: string, identity: Identity): Promise<{ key: string; value: string; txid: string; created: string } | null> {
+  // First scan with no retry assumption — if the value isn't there, we
+  // need to know whether it was tombstoned or just never written. The
+  // raw scan returns both.
+  const raw = await scanPermanentRaw(identity);
+  const matches = raw.filter(e => e.key === key);
+  if (matches.length > 0) {
+    const latest = matches.sort((a, b) => b.round - a.round)[0];
+    if (latest.tombstone) return null;
+    return { key: latest.key, value: latest.value, txid: latest.txid, created: latest.created };
+  }
+  // Not found yet — give the indexer a chance to catch up.
+  const live = await scanPermanent(identity, { lookingFor: key });
+  const match = live.find(e => e.key === key);
+  if (!match) return null;
+  return { key: match.key, value: match.value, txid: match.txid, created: match.created };
+}
+
+export async function permanentList(identity: Identity): Promise<{ key: string; txid: string; created: string }[]> {
+  const live = await scanPermanent(identity, { retries: 1 });
+  return live.map(e => ({ key: e.key, txid: e.txid, created: e.created }));
+}
+
+/**
+ * Tombstone a permanent record. The original tx remains on chain forever
+ * (that's what "permanent" means), but a follow-up tx with a tombstone
+ * note tells future scans to treat the key as deleted. Recall and list
+ * will not surface tombstoned keys.
+ */
+export async function permanentDelete(key: string, identity: Identity): Promise<string | null> {
+  if (!await checkAlgod()) {
+    sendError("Cannot reach algod. Is localnet running? Set ALGOD_URL if using a remote node.");
+    return null;
+  }
+  await ensureFunded(identity.address);
+  const noteData = JSON.stringify({
+    key,
+    type: PERMANENT_TOMBSTONE,
+    user: identity.address,
+    created: new Date().toISOString(),
+  });
+  const note = new Uint8Array(Buffer.from(noteData));
+  const params = await getSuggestedParams();
+  const sender = algosdk.Address.fromString(identity.address);
+  const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+    sender,
+    receiver: sender,
+    amount: BigInt(0),
+    suggestedParams: params,
+    note,
+  });
+  const signed = txn.signTxn(identity.signingKey);
+  return await submitAndWait(signed);
 }
