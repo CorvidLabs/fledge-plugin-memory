@@ -157,7 +157,7 @@ async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: s
     const allTxns = txns.transactions ?? [];
     const latestTx = allTxns[allTxns.length - 1];
     if (latestTx?.note) {
-      const decoded = Buffer.from(latestTx.note, "base64").toString("utf-8");
+      const decoded = Buffer.from(latestTx.note as unknown as string, "base64").toString("utf-8");
       return { asaId: entry.asaId, metadata: decoded };
     }
   } catch {}
