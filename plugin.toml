@@ -1,0 +1,19 @@
+[plugin]
+name = "fledge-plugin-memory"
+version = "0.1.0"
+description = "Three-tier memory — ephemeral (SQLite), mutable (ARC-69 ASA), permanent (on-chain txn)"
+author = "CorvidLabs"
+protocol = "fledge-v1"
+
+[[commands]]
+name = "memory"
+description = "Three-tier memory management"
+binary = "bin/fledge-memory"
+
+[hooks]
+build = "bun install && bun build src/index.ts --compile --outfile bin/fledge-memory"
+
+[capabilities]
+exec = true
+store = true
+metadata = true
