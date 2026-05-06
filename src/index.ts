@@ -174,6 +174,7 @@ async function cmdRecall(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     } else {
       sendError(`Memory not found: ${args.key}`);
     }
+    process.exit(1);
   }
 }
 
@@ -241,6 +242,7 @@ async function cmdDelete(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     } else {
       sendError(`Memory not found: ${args.key}`);
     }
+    process.exit(1);
   }
 }
 
