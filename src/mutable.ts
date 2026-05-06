@@ -92,22 +92,32 @@ export async function mutableRecall(key: string, identity: Identity): Promise<{ 
 export async function mutableList(identity: Identity): Promise<{ key: string; asaId: string }[]> {
   if (!await checkAlgod()) return [];
 
+  // Prefer algod (real-time) over indexer (1-3s lag) for finding our created
+  // ASAs. Otherwise rapid back-to-back `save` calls race the indexer and
+  // create duplicate ASAs for the same key.
   try {
-    const indexer = getIndexer();
-    const result = await indexer.lookupAccountCreatedAssets(identity.address).do();
-    const assets = result.assets ?? [];
-
-    return assets
+    const algod = getAlgod();
+    const info = await algod.accountInformation(identity.address).do();
+    const assets = (info.createdAssets ?? info["created-assets"] ?? []) as any[];
+    const out = assets
       .filter((a: any) => a.params?.name?.startsWith("mem:"))
       .map((a: any) => ({
         key: a.params.name.substring(4),
         asaId: String(a.index),
       }));
+    // If a key was duplicated by an earlier race, keep the lowest ASA id —
+    // that's the original record; later acfg writes against it still work.
+    const byKey = new Map<string, { key: string; asaId: string }>();
+    for (const e of out) {
+      const cur = byKey.get(e.key);
+      if (!cur || BigInt(e.asaId) < BigInt(cur.asaId)) byKey.set(e.key, e);
+    }
+    return Array.from(byKey.values());
   } catch {
     try {
-      const algod = getAlgod();
-      const info = await algod.accountInformation(identity.address).do();
-      const assets = info.createdAssets ?? [];
+      const indexer = getIndexer();
+      const result = await indexer.lookupAccountCreatedAssets(identity.address).do();
+      const assets = result.assets ?? [];
       return assets
         .filter((a: any) => a.params?.name?.startsWith("mem:"))
         .map((a: any) => ({
@@ -143,25 +153,52 @@ export async function mutableDelete(key: string, identity: Identity): Promise<bo
 }
 
 async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: string; metadata?: string } | null> {
-  const list = await mutableList(identity);
-  const entry = list.find(e => e.key === key);
+  // Retry the algod lookup briefly: a save just performed can take a
+  // round (~3s on localnet, ~5s on testnet) before getAssetByID and
+  // accountInformation reflect it. Without retry, a save followed by an
+  // immediate recall in the same script returns not_found.
+  let entry: { key: string; asaId: string } | undefined;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const list = await mutableList(identity);
+    entry = list.find(e => e.key === key);
+    if (entry) break;
+    if (attempt < 4) await new Promise(r => setTimeout(r, 1500));
+  }
   if (!entry) return null;
 
-  try {
-    const indexer = getIndexer();
-    const txns = await indexer
-      .searchForTransactions()
-      .assetID(Number(entry.asaId))
-      .txType("acfg")
-      .do();
+  // Retry the indexer lookup too — newly-saved acfg notes can take 5-15s
+  // to appear after the save submits, and "empty results" is just as
+  // likely as "indexer threw" during that window. Both cases retry.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const indexer = getIndexer();
+      const txns = await indexer
+        .searchForTransactions()
+        .assetID(Number(entry.asaId))
+        .txType("acfg")
+        .do();
 
-    const allTxns = txns.transactions ?? [];
-    const latestTx = allTxns[allTxns.length - 1];
-    if (latestTx?.note) {
-      const decoded = Buffer.from(latestTx.note as unknown as string, "base64").toString("utf-8");
-      return { asaId: entry.asaId, metadata: decoded };
-    }
-  } catch {}
+      // ARC-69 says "the most recent acfg note wins". Don't trust indexer
+      // default ordering; sort explicitly by confirmed-round desc using
+      // BigInt comparison (the field is a BigInt in algosdk v3, and
+      // Number() narrowing loses precision past 2^53 — unlikely to matter
+      // in practice but BigInt comparison is the correct shape).
+      const allTxns = (txns.transactions ?? []).slice().sort((a: any, b: any) => {
+        const ra = BigInt(a.confirmedRound ?? a["confirmed-round"] ?? 0);
+        const rb = BigInt(b.confirmedRound ?? b["confirmed-round"] ?? 0);
+        if (rb > ra) return 1;
+        if (rb < ra) return -1;
+        return 0;
+      });
+      const latestTx = allTxns[0];
+      if (latestTx?.note) {
+        const decoded = Buffer.from(latestTx.note as unknown as string, "base64").toString("utf-8");
+        return { asaId: entry.asaId, metadata: decoded };
+      }
+      // Empty results — fall through to retry.
+    } catch {}
+    if (attempt < 7) await new Promise(r => setTimeout(r, 2500));
+  }
 
   try {
     const algod = getAlgod();
