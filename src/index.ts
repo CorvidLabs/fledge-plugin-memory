@@ -83,12 +83,14 @@ async function cmdSave(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
       break;
     case "mutable": {
       const asaId = await mutableSave(args.key, args.value, identity);
-      if (asaId) sendOutput(`Saved to mutable (ASA ID: ${asaId}): ${args.key}`);
+      if (!asaId) process.exit(1);
+      sendOutput(`Saved to mutable (ASA ID: ${asaId}): ${args.key}`);
       break;
     }
     case "permanent": {
       const txid = await permanentSave(args.key, args.value, identity);
-      if (txid) sendOutput(`Saved to permanent (txid: ${txid}): ${args.key}`);
+      if (!txid) process.exit(1);
+      sendOutput(`Saved to permanent (txid: ${txid}): ${args.key}`);
       break;
     }
   }
@@ -191,16 +193,14 @@ async function cmdPromote(args: ParsedArgs, pluginDir: string, identity: ReturnT
 
   if (targetTier === "mutable") {
     const asaId = await mutableSave(args.key, value, identity);
-    if (asaId) {
-      await ephemeralDelete(args.key, identity);
-      sendOutput(`Promoted ${args.key} from ephemeral to mutable (ASA ID: ${asaId})`);
-    }
+    if (!asaId) process.exit(1);
+    await ephemeralDelete(args.key, identity);
+    sendOutput(`Promoted ${args.key} from ephemeral to mutable (ASA ID: ${asaId})`);
   } else if (targetTier === "permanent") {
     const txid = await permanentSave(args.key, value, identity);
-    if (txid) {
-      await ephemeralDelete(args.key, identity);
-      sendOutput(`Promoted ${args.key} from ephemeral to permanent (txid: ${txid})`);
-    }
+    if (!txid) process.exit(1);
+    await ephemeralDelete(args.key, identity);
+    sendOutput(`Promoted ${args.key} from ephemeral to permanent (txid: ${txid})`);
   }
 }
 
