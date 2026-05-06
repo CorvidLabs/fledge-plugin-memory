@@ -1,5 +1,5 @@
 import { recvJson, sendOutput, sendError, type InitMessage } from "./protocol.js";
-import { getOrCreateIdentity } from "./identity.js";
+import { getOrCreateIdentity, initIdentityStorage } from "./identity.js";
 import { ensureEphemeral, ephemeralSave, ephemeralRecall, ephemeralList, ephemeralDelete, ephemeralSearch, ephemeralGetRaw } from "./ephemeral.js";
 import { mutableSave, mutableRecall, mutableList, mutableDelete } from "./mutable.js";
 import { permanentSave } from "./permanent.js";
@@ -59,6 +59,7 @@ async function main() {
   const init = await recvJson<InitMessage>();
   const parsed = parseArgs(init.args);
   const pluginDir = init.plugin.dir;
+  initIdentityStorage(init.project.root);
 
   if (parsed.command === "help" || parsed.command === "--help" || parsed.command === "-h") {
     cmdHelp();

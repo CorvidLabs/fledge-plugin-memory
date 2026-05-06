@@ -1,4 +1,4 @@
-import { sendStore, sendLoad, sendLog } from "./protocol.js";
+import { sendExec, sendLog } from "./protocol.js";
 import algosdk from "algosdk";
 import {
   generateEphemeralKeyPair,
@@ -8,16 +8,30 @@ import {
 
 export interface Identity {
   address: string;
-  signingKey: Uint8Array; // ed25519 secret key for Algorand txns
-  publicKey: Uint8Array;  // X25519 public key for encryption
-  privateKey: Uint8Array; // X25519 private key for encryption
+  signingKey: Uint8Array;
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
 }
 
-const IDENTITY_KEY = "identity-v2";
+let projectRoot = ".";
+let cachedIdentity: Identity | null = null;
+
+export function initIdentityStorage(root: string): void {
+  projectRoot = root;
+}
+
+function identityFilePath(): string {
+  return `${projectRoot}/.fledge/memory-identity.json`;
+}
 
 export async function getOrCreateIdentity(): Promise<Identity> {
+  if (cachedIdentity) return cachedIdentity;
+
   const existing = await loadIdentity();
-  if (existing) return existing;
+  if (existing) {
+    cachedIdentity = existing;
+    return existing;
+  }
 
   const account = algosdk.generateAccount();
   const kp = generateEphemeralKeyPair();
@@ -29,20 +43,27 @@ export async function getOrCreateIdentity(): Promise<Identity> {
     privateKey: kp.privateKey,
   };
 
-  sendStore(IDENTITY_KEY, JSON.stringify({
+  const data = JSON.stringify({
     address: identity.address,
     mnemonic: algosdk.secretKeyToMnemonic(account.sk),
     publicKey: publicKeyToBase64(identity.publicKey),
     privateKey: publicKeyToBase64(identity.privateKey),
-  }));
+  }, null, 2);
+
+  const escaped = data.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
+  const filePath = identityFilePath();
+  await sendExec(`mkdir -p '${projectRoot}/.fledge' && printf '%s' '${escaped}' > '${filePath}' && chmod 600 '${filePath}'`);
 
   sendLog("info", `Memory identity created: ${identity.address.substring(0, 8)}...`);
+  cachedIdentity = identity;
   return identity;
 }
 
 async function loadIdentity(): Promise<Identity | null> {
-  const raw = await sendLoad(IDENTITY_KEY);
-  if (!raw) return null;
+  const filePath = identityFilePath();
+  const result = await sendExec(`cat '${filePath}' 2>/dev/null || echo 'null'`);
+  const raw = result.stdout.trim();
+  if (!raw || raw === "null") return null;
   try {
     const data = JSON.parse(raw);
     const account = algosdk.mnemonicToSecretKey(data.mnemonic);
