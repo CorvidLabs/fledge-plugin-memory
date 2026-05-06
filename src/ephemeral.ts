@@ -6,7 +6,7 @@ let initialized = false;
 async function checkSqlPlugin(): Promise<boolean> {
   if (sqlAvailable !== null) return sqlAvailable;
   const result = await sendExec("fledge sql help");
-  sqlAvailable = result.exit_code === 0;
+  sqlAvailable = result.code === 0;
   if (!sqlAvailable) {
     sendLog("warn", "fledge-plugin-sql not installed. Ephemeral tier using fallback store (64KB limit, 256 keys max). Install: fledge plugins install CorvidLabs/fledge-plugin-sql");
   }
@@ -90,7 +90,7 @@ async function sqlSave(key: string, value: string): Promise<void> {
 async function sqlRecall(key: string): Promise<{ key: string; value: string; updated_at: string } | null> {
   const escaped_key = key.replace(/'/g, "''");
   const result = await sendExec(`fledge sql query "SELECT key, value, updated_at FROM memories WHERE key='${escaped_key}'"`);
-  if (result.exit_code !== 0 || !result.stdout.trim()) return null;
+  if (result.code !== 0 || !result.stdout.trim()) return null;
   const lines = result.stdout.trim().split("\n").filter(l => l.trim() && !l.startsWith("---"));
   if (lines.length < 2) return null;
   const parts = lines[1].split("|").map(s => s.trim());
@@ -100,7 +100,7 @@ async function sqlRecall(key: string): Promise<{ key: string; value: string; upd
 
 async function sqlList(): Promise<{ key: string; value: string; updated_at: string }[]> {
   const result = await sendExec('fledge sql query "SELECT key, value, updated_at FROM memories ORDER BY updated_at DESC"');
-  if (result.exit_code !== 0 || !result.stdout.trim()) return [];
+  if (result.code !== 0 || !result.stdout.trim()) return [];
   const lines = result.stdout.trim().split("\n").filter(l => l.trim() && !l.startsWith("---"));
   if (lines.length < 2) return [];
   return lines.slice(1).map(line => {
@@ -120,7 +120,7 @@ async function sqlDelete(key: string): Promise<boolean> {
 async function sqlSearch(query: string): Promise<{ key: string; value: string; updated_at: string }[]> {
   const escaped = query.replace(/'/g, "''");
   const result = await sendExec(`fledge sql query "SELECT key, value, updated_at FROM memories WHERE key LIKE '%${escaped}%' OR value LIKE '%${escaped}%' ORDER BY updated_at DESC"`);
-  if (result.exit_code !== 0 || !result.stdout.trim()) return [];
+  if (result.code !== 0 || !result.stdout.trim()) return [];
   const lines = result.stdout.trim().split("\n").filter(l => l.trim() && !l.startsWith("---"));
   if (lines.length < 2) return [];
   return lines.slice(1).map(line => {

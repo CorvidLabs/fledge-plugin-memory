@@ -49,17 +49,16 @@ function nextId(): string {
   return String(++msgId);
 }
 
-export async function sendExec(command: string): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+export async function sendExec(command: string): Promise<{ stdout: string; stderr: string; code: number }> {
   const id = nextId();
   send({ type: "exec", id, command });
-  const resp = await recvJson<{ stdout?: string; stderr?: string; exit_code?: number }>();
-  return { stdout: resp.stdout ?? "", stderr: resp.stderr ?? "", exit_code: resp.exit_code ?? 0 };
+  const resp = await recvJson<{ value: { code?: number; stdout?: string; stderr?: string } }>();
+  const v = resp.value ?? {};
+  return { stdout: v.stdout ?? "", stderr: v.stderr ?? "", code: v.code ?? 0 };
 }
 
-export async function sendStore(key: string, value: string): Promise<void> {
-  const id = nextId();
-  send({ type: "store", id, key, value });
-  await recv();
+export function sendStore(key: string, value: string): void {
+  send({ type: "store", key, value });
 }
 
 export async function sendLoad(key: string): Promise<string | null> {
