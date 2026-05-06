@@ -1,7 +1,7 @@
 import algosdk from "algosdk";
 import { sendError } from "./protocol.js";
 import { encryptValue } from "./encrypt.js";
-import { checkAlgod, getSuggestedParams, submitAndWait } from "./algorand.js";
+import { checkAlgod, getSuggestedParams, submitAndWait, ensureFunded } from "./algorand.js";
 import type { Identity } from "./identity.js";
 
 export async function permanentSave(key: string, value: string, identity: Identity): Promise<string | null> {
@@ -10,6 +10,7 @@ export async function permanentSave(key: string, value: string, identity: Identi
     return null;
   }
 
+  await ensureFunded(identity.address);
   const encrypted = encryptValue(value, identity);
   const noteData = JSON.stringify({
     key,

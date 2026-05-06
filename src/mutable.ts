@@ -1,7 +1,7 @@
 import algosdk from "algosdk";
 import { sendError, sendLog } from "./protocol.js";
 import { encryptValue, decryptValue } from "./encrypt.js";
-import { getAlgod, getIndexer, checkAlgod, getSuggestedParams, submitAndWait } from "./algorand.js";
+import { getAlgod, getIndexer, checkAlgod, getSuggestedParams, submitAndWait, ensureFunded } from "./algorand.js";
 import type { Identity } from "./identity.js";
 
 function arc69Metadata(key: string, encryptedValue: string, userAddress: string): string {
@@ -24,6 +24,7 @@ export async function mutableSave(key: string, value: string, identity: Identity
     return null;
   }
 
+  await ensureFunded(identity.address);
   const encrypted = encryptValue(value, identity);
   const metadata = arc69Metadata(key, encrypted, identity.address);
   const note = new Uint8Array(Buffer.from(metadata));
