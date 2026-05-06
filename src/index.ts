@@ -45,6 +45,8 @@ async function main() {
       sendError(`Unknown command: ${parsed.command}. Run: fledge memory help`);
       process.exit(1);
   }
+
+  process.exit(0);
 }
 
 async function cmdSave(args: ParsedArgs, pluginDir: string) {
