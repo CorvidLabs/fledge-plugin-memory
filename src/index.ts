@@ -14,6 +14,7 @@ interface ParsedArgs {
   query?: string;
   ttl?: number;
   tier?: Tier;
+  json: boolean;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -23,6 +24,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let query: string | undefined;
   let ttl: number | undefined;
   let tier: Tier | undefined;
+  let json = false;
 
   for (let i = 1; i < args.length; i++) {
     switch (args[i]) {
@@ -31,9 +33,14 @@ function parseArgs(args: string[]): ParsedArgs {
       case "--query": query = args[++i]; break;
       case "--tier": tier = args[++i] as Tier; break;
       case "--ttl": ttl = parseInt(args[++i], 10); break;
+      case "--json": json = true; break;
     }
   }
-  return { command, key, value, query, ttl, tier };
+  return { command, key, value, query, ttl, tier, json };
+}
+
+function sendJson(data: unknown): void {
+  sendOutput(JSON.stringify(data));
 }
 
 async function main() {
@@ -49,9 +56,18 @@ async function main() {
   const identity = await getOrCreateIdentity();
 
   if (parsed.command === "identity") {
-    sendOutput(`Address: ${identity.address}`);
-    sendOutput(`Public key: ${publicKeyToBase64(identity.publicKey)}`);
-    sendOutput(`Fingerprint: ${fingerprint(identity.publicKey)}`);
+    const data = {
+      address: identity.address,
+      publicKey: publicKeyToBase64(identity.publicKey),
+      fingerprint: fingerprint(identity.publicKey),
+    };
+    if (parsed.json) {
+      sendJson(data);
+    } else {
+      sendOutput(`Address: ${data.address}`);
+      sendOutput(`Public key: ${data.publicKey}`);
+      sendOutput(`Fingerprint: ${data.fingerprint}`);
+    }
     process.exit(0);
   }
 
@@ -82,18 +98,30 @@ async function cmdSave(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
     case "ephemeral":
       if (!sqlReady) { sendError("SQL plugin not available for ephemeral storage."); process.exit(1); }
       await ephemeralSave(args.key, args.value, identity, args.ttl);
-      sendOutput(`Saved to ephemeral: ${args.key} (expires in ${args.ttl ?? 168}h)`);
+      if (args.json) {
+        sendJson({ ok: true, tier: "ephemeral", key: args.key, ttl: args.ttl ?? 168 });
+      } else {
+        sendOutput(`Saved to ephemeral: ${args.key} (expires in ${args.ttl ?? 168}h)`);
+      }
       break;
     case "mutable": {
       const asaId = await mutableSave(args.key, args.value, identity);
       if (!asaId) process.exit(1);
-      sendOutput(`Saved to mutable (ASA ID: ${asaId}): ${args.key}`);
+      if (args.json) {
+        sendJson({ ok: true, tier: "mutable", key: args.key, asaId });
+      } else {
+        sendOutput(`Saved to mutable (ASA ID: ${asaId}): ${args.key}`);
+      }
       break;
     }
     case "permanent": {
       const txid = await permanentSave(args.key, args.value, identity);
       if (!txid) process.exit(1);
-      sendOutput(`Saved to permanent (txid: ${txid}): ${args.key}`);
+      if (args.json) {
+        sendJson({ ok: true, tier: "permanent", key: args.key, txid });
+      } else {
+        sendOutput(`Saved to permanent (txid: ${txid}): ${args.key}`);
+      }
       break;
     }
   }
@@ -108,8 +136,12 @@ async function cmdRecall(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
   if (args.query) {
     if (!sqlReady) { sendError("SQL plugin not available for search."); process.exit(1); }
     const results = await ephemeralSearch(args.query, identity);
-    if (results.length === 0) { sendOutput("No memories found."); return; }
-    for (const r of results) sendOutput(`[ephemeral] ${r.key} = ${r.value} (updated: ${r.updated_at})`);
+    if (args.json) {
+      sendJson({ results: results.map(r => ({ key: r.key, value: r.value, tier: "ephemeral", updated_at: r.updated_at })) });
+    } else {
+      if (results.length === 0) { sendOutput("No memories found."); return; }
+      for (const r of results) sendOutput(`[ephemeral] ${r.key} = ${r.value} (updated: ${r.updated_at})`);
+    }
     return;
   }
 
@@ -117,43 +149,65 @@ async function cmdRecall(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     if (sqlReady) {
       const result = await ephemeralRecall(args.key, identity);
       if (result) {
-        const expiry = result.expires_at ? ` (expires: ${result.expires_at})` : "";
-        sendOutput(`[ephemeral] ${result.key} = ${result.value} (updated: ${result.updated_at})${expiry}`);
+        if (args.json) {
+          sendJson({ key: result.key, value: result.value, tier: "ephemeral", updated_at: result.updated_at, expires_at: result.expires_at });
+        } else {
+          const expiry = result.expires_at ? ` (expires: ${result.expires_at})` : "";
+          sendOutput(`[ephemeral] ${result.key} = ${result.value} (updated: ${result.updated_at})${expiry}`);
+        }
         return;
       }
     }
 
     const mResult = await mutableRecall(args.key, identity);
     if (mResult) {
-      sendOutput(`[mutable] ${mResult.key} = ${mResult.value} (ASA: ${mResult.asaId})`);
+      if (args.json) {
+        sendJson({ key: mResult.key, value: mResult.value, tier: "mutable", asaId: mResult.asaId });
+      } else {
+        sendOutput(`[mutable] ${mResult.key} = ${mResult.value} (ASA: ${mResult.asaId})`);
+      }
       return;
     }
 
-    sendError(`Memory not found: ${args.key}`);
+    if (args.json) {
+      sendJson({ error: "not_found", key: args.key });
+    } else {
+      sendError(`Memory not found: ${args.key}`);
+    }
   }
 }
 
 async function cmdList(args: ParsedArgs, identity: ReturnType<typeof getOrCreateIdentity> extends Promise<infer T> ? T : never, sqlReady: boolean) {
   const showEphemeral = args.tier === "ephemeral" || !args.tier;
   const showMutable = args.tier === "mutable" || !args.tier;
-  let hasResults = false;
+  const memories: { key: string; tier: string; updated_at?: string; expires_at?: string | null; asaId?: string }[] = [];
 
   if (showEphemeral && sqlReady) {
     const items = await ephemeralList(identity);
     for (const item of items) {
-      const expiry = item.expires_at ? ` expires:${item.expires_at}` : "";
-      sendOutput(`ephemeral    ${item.key.padEnd(20)} ${item.updated_at}${expiry}`);
-      hasResults = true;
+      memories.push({ key: item.key, tier: "ephemeral", updated_at: item.updated_at, expires_at: item.expires_at });
     }
   }
   if (showMutable) {
     const items = await mutableList(identity);
     for (const item of items) {
-      sendOutput(`mutable      ${item.key.padEnd(20)} ASA:${item.asaId}`);
-      hasResults = true;
+      memories.push({ key: item.key, tier: "mutable", asaId: item.asaId });
     }
   }
-  if (!hasResults) sendOutput("No memories found.");
+
+  if (args.json) {
+    sendJson({ memories });
+  } else {
+    if (memories.length === 0) { sendOutput("No memories found."); return; }
+    for (const m of memories) {
+      if (m.tier === "ephemeral") {
+        const expiry = m.expires_at ? ` expires:${m.expires_at}` : "";
+        sendOutput(`ephemeral    ${m.key.padEnd(20)} ${m.updated_at}${expiry}`);
+      } else {
+        sendOutput(`mutable      ${m.key.padEnd(20)} ASA:${m.asaId}`);
+      }
+    }
+  }
 }
 
 async function cmdDelete(args: ParsedArgs, identity: ReturnType<typeof getOrCreateIdentity> extends Promise<infer T> ? T : never, sqlReady: boolean) {
@@ -166,15 +220,28 @@ async function cmdDelete(args: ParsedArgs, identity: ReturnType<typeof getOrCrea
     process.exit(1);
   }
   let deleted = false;
+  let fromTier = "";
   if ((args.tier === "ephemeral" || !args.tier) && sqlReady) {
     deleted = await ephemeralDelete(args.key, identity);
-    if (deleted) { sendOutput(`Deleted from ephemeral: ${args.key}`); return; }
+    if (deleted) fromTier = "ephemeral";
   }
-  if (args.tier === "mutable" || (!args.tier && !deleted)) {
+  if (!deleted && (args.tier === "mutable" || !args.tier)) {
     deleted = await mutableDelete(args.key, identity);
-    if (deleted) { sendOutput(`Deleted from mutable: ${args.key}`); return; }
+    if (deleted) fromTier = "mutable";
   }
-  if (!deleted) sendError(`Memory not found: ${args.key}`);
+  if (deleted) {
+    if (args.json) {
+      sendJson({ ok: true, key: args.key, tier: fromTier });
+    } else {
+      sendOutput(`Deleted from ${fromTier}: ${args.key}`);
+    }
+  } else {
+    if (args.json) {
+      sendJson({ error: "not_found", key: args.key });
+    } else {
+      sendError(`Memory not found: ${args.key}`);
+    }
+  }
 }
 
 async function cmdPromote(args: ParsedArgs, pluginDir: string, identity: ReturnType<typeof getOrCreateIdentity> extends Promise<infer T> ? T : never, sqlReady: boolean) {
@@ -198,12 +265,20 @@ async function cmdPromote(args: ParsedArgs, pluginDir: string, identity: ReturnT
     const asaId = await mutableSave(args.key, value, identity);
     if (!asaId) process.exit(1);
     await ephemeralDelete(args.key, identity);
-    sendOutput(`Promoted ${args.key} from ephemeral to mutable (ASA ID: ${asaId})`);
+    if (args.json) {
+      sendJson({ ok: true, key: args.key, from: "ephemeral", to: "mutable", asaId });
+    } else {
+      sendOutput(`Promoted ${args.key} from ephemeral to mutable (ASA ID: ${asaId})`);
+    }
   } else if (targetTier === "permanent") {
     const txid = await permanentSave(args.key, value, identity);
     if (!txid) process.exit(1);
     await ephemeralDelete(args.key, identity);
-    sendOutput(`Promoted ${args.key} from ephemeral to permanent (txid: ${txid})`);
+    if (args.json) {
+      sendJson({ ok: true, key: args.key, from: "ephemeral", to: "permanent", txid });
+    } else {
+      sendOutput(`Promoted ${args.key} from ephemeral to permanent (txid: ${txid})`);
+    }
   }
 }
 
@@ -212,12 +287,12 @@ function cmdHelp() {
   sendOutput("  Uses: fledge-plugin-sql, fledge-plugin-localnet, @corvidlabs/ts-algochat");
   sendOutput("");
   sendOutput("Commands:");
-  sendOutput("  save --key <k> --value <v> [--tier ...] [--ttl <hours>]");
-  sendOutput("  recall --key <k> | --query <search>");
-  sendOutput("  list [--tier ...]");
-  sendOutput("  delete --key <k>");
-  sendOutput("  promote --key <k> [--tier mutable|permanent]");
-  sendOutput("  identity                     Show wallet & encryption key");
+  sendOutput("  save --key <k> --value <v> [--tier ...] [--ttl <hours>] [--json]");
+  sendOutput("  recall --key <k> | --query <search> [--json]");
+  sendOutput("  list [--tier ...] [--json]");
+  sendOutput("  delete --key <k> [--json]");
+  sendOutput("  promote --key <k> [--tier mutable|permanent] [--json]");
+  sendOutput("  identity [--json]                Show wallet & encryption key");
   sendOutput("");
   sendOutput("Tiers: ephemeral (default, 7d TTL), mutable (on-chain ASA), permanent (immutable tx)");
   sendOutput("All memories are encrypted and tied to your wallet identity.");
