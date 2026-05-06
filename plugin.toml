@@ -11,7 +11,7 @@ description = "Three-tier memory management"
 binary = "bin/fledge-memory"
 
 [hooks]
-build = "bun install && bun build src/index.ts --compile --outfile bin/fledge-memory"
+build = "hooks/build.sh"
 
 [capabilities]
 exec = true
