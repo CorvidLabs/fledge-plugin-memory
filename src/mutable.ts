@@ -152,10 +152,10 @@ async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: s
       .searchForTransactions()
       .assetID(Number(entry.asaId))
       .txType("acfg")
-      .limit(1)
       .do();
 
-    const latestTx = txns.transactions?.[0];
+    const allTxns = txns.transactions ?? [];
+    const latestTx = allTxns[allTxns.length - 1];
     if (latestTx?.note) {
       const decoded = Buffer.from(latestTx.note, "base64").toString("utf-8");
       return { asaId: entry.asaId, metadata: decoded };
