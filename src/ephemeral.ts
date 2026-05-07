@@ -5,7 +5,18 @@ import type { Identity } from "./identity.js";
 const DEFAULT_TTL_HOURS = 168; // 7 days
 let initialized = false;
 
-export async function ensureEphemeral(pluginDir: string): Promise<boolean> {
+// Inline migration SQL so the table is always created, even when
+// `fledge sql migrate --dir` is unavailable or the migrations directory
+// cannot be resolved at runtime. Every statement uses IF NOT EXISTS so
+// re-running is safe. Each entry is a single statement (no newlines) to
+// avoid shell-escaping issues when passed through `fledge sql query`.
+const MIGRATION_STATEMENTS = [
+  "CREATE TABLE IF NOT EXISTS memories (key TEXT NOT NULL, value TEXT NOT NULL, user_address TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT, PRIMARY KEY (key, user_address))",
+  "CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at)",
+];
+
+export async function ensureEphemeral(_pluginDir: string): Promise<boolean> {
   if (initialized) return true;
 
   const sqlCheck = await sendExec("fledge sql help 2>/dev/null");
@@ -19,10 +30,17 @@ export async function ensureEphemeral(pluginDir: string): Promise<boolean> {
     sendLog("warn", `fledge sql init failed (code ${initResult.code}): ${initResult.stderr.trim() || initResult.stdout.trim()}`);
     return false;
   }
-  const migrateResult = await sendExec(`fledge sql migrate --dir '${pluginDir}/migrations'`);
-  if (migrateResult.code !== 0) {
-    sendLog("warn", `fledge sql migrate failed (code ${migrateResult.code}): ${migrateResult.stderr.trim() || migrateResult.stdout.trim()}`);
-    return false;
+
+  // Run migration SQL inline instead of relying on `fledge sql migrate`.
+  // This avoids failures when the migrations directory path is not
+  // resolvable or the migrate subcommand is missing from older versions
+  // of fledge-plugin-sql.
+  for (const stmt of MIGRATION_STATEMENTS) {
+    const r = await sendExec(`fledge sql query ${JSON.stringify(stmt)}`);
+    if (r.code !== 0) {
+      sendLog("warn", `migration statement failed (code ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
+      return false;
+    }
   }
 
   initialized = true;
