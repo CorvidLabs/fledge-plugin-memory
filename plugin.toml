@@ -1,6 +1,6 @@
 [plugin]
 name = "fledge-plugin-memory"
-version = "0.2.0"
+version = "0.3.0"
 description = "Three-tier memory — ephemeral (SQLite), mutable (ARC-69 ASA), permanent (on-chain txn)"
 author = "CorvidLabs"
 protocol = "fledge-v1"
