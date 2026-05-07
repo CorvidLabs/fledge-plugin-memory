@@ -152,13 +152,18 @@ export async function mutableDelete(key: string, identity: Identity): Promise<bo
   }
 }
 
+const RETRY_TIMEOUT_MS = 120_000; // 2-minute absolute wall-clock timeout
+
 async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: string; metadata?: string } | null> {
+  const deadline = Date.now() + RETRY_TIMEOUT_MS;
+
   // Retry the algod lookup briefly: a save just performed can take a
   // round (~3s on localnet, ~5s on testnet) before getAssetByID and
   // accountInformation reflect it. Without retry, a save followed by an
   // immediate recall in the same script returns not_found.
   let entry: { key: string; asaId: string } | undefined;
   for (let attempt = 0; attempt < 5; attempt++) {
+    if (Date.now() > deadline) break;
     const list = await mutableList(identity);
     entry = list.find(e => e.key === key);
     if (entry) break;
@@ -170,6 +175,7 @@ async function findAsaByKey(key: string, identity: Identity): Promise<{ asaId: s
   // to appear after the save submits, and "empty results" is just as
   // likely as "indexer threw" during that window. Both cases retry.
   for (let attempt = 0; attempt < 8; attempt++) {
+    if (Date.now() > deadline) break;
     try {
       const indexer = getIndexer();
       const txns = await indexer
