@@ -137,21 +137,31 @@ async function scanPermanent(
 }
 
 export async function permanentRecall(key: string, identity: Identity): Promise<{ key: string; value: string; txid: string; created: string } | null> {
-  // First scan with no retry assumption — if the value isn't there, we
-  // need to know whether it was tombstoned or just never written. The
-  // raw scan returns both.
-  const raw = await scanPermanentRaw(identity);
-  const matches = raw.filter(e => e.key === key);
-  if (matches.length > 0) {
-    const latest = matches.sort((a, b) => b.round - a.round)[0];
-    if (latest.tombstone) return null;
-    return { key: latest.key, value: latest.value, txid: latest.txid, created: latest.created };
-  }
-  // Not found yet — give the indexer a chance to catch up.
-  const live = await scanPermanent(identity, { lookingFor: key });
+  // Use scanPermanent which deduplicates by key (latest round wins)
+  // and filters out tombstoned entries. It handles indexer-lag retries
+  // internally when lookingFor/expectTombstoneFor are provided.
+  //
+  // For recall, we first check without retry hints — if the key is
+  // already live or already tombstoned the dedup logic handles it.
+  // If the key isn't found at all, we retry with lookingFor in case
+  // the indexer is still catching up from a recent save.
+  const live = await scanPermanent(identity, { retries: 1 });
   const match = live.find(e => e.key === key);
-  if (!match) return null;
-  return { key: match.key, value: match.value, txid: match.txid, created: match.created };
+  if (match) return { key: match.key, value: match.value, txid: match.txid, created: match.created };
+
+  // Not in the live set. Either tombstoned, not written, or indexer lag.
+  // Check raw to see if any entry (including tombstones) exists.
+  const raw = await scanPermanentRaw(identity);
+  if (raw.some(e => e.key === key)) {
+    // Entries exist but none survived the tombstone filter — key is deleted.
+    return null;
+  }
+
+  // Genuinely not found yet — retry with lookingFor for indexer lag.
+  const retried = await scanPermanent(identity, { lookingFor: key, retries: 6 });
+  const retryMatch = retried.find(e => e.key === key);
+  if (retryMatch) return { key: retryMatch.key, value: retryMatch.value, txid: retryMatch.txid, created: retryMatch.created };
+  return null;
 }
 
 export async function permanentList(identity: Identity): Promise<{ key: string; txid: string; created: string }[]> {

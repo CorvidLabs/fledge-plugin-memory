@@ -165,7 +165,7 @@ def main() -> int:
 
         out = r.run(["delete", "--key", "born", "--tier", "permanent", "--json"])
         assert_in("permanent delete (tombstone)", out, '"tombstoneTxid"')
-        time.sleep(8)
+        time.sleep(15)
         out = r.run(["recall", "--key", "born", "--tier", "permanent", "--json"])
         assert_in("permanent recall after delete returns not_found",
                   out, '"error":"not_found"')
