@@ -4,6 +4,7 @@ import { sendLog } from "./protocol.js";
 const DEFAULT_ALGOD_URL = "http://localhost:4001";
 const DEFAULT_ALGOD_TOKEN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DEFAULT_INDEXER_URL = "http://localhost:8980";
+const DEFAULT_INDEXER_TOKEN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DEFAULT_KMD_URL = "http://localhost:4002";
 
 function parseUrl(url: string): { base: string; port: string } {
@@ -28,7 +29,7 @@ export function getAlgod(): algosdk.Algodv2 {
 export function getIndexer(): algosdk.Indexer {
   if (!indexerClient) {
     const url = process.env.INDEXER_URL ?? DEFAULT_INDEXER_URL;
-    const token = process.env.ALGOD_TOKEN ?? DEFAULT_ALGOD_TOKEN;
+    const token = process.env.INDEXER_TOKEN ?? DEFAULT_INDEXER_TOKEN;
     const { base, port } = parseUrl(url);
     indexerClient = new algosdk.Indexer(token, base, port);
   }

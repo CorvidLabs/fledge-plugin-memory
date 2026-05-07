@@ -50,9 +50,11 @@ export async function getOrCreateIdentity(): Promise<Identity> {
     privateKey: publicKeyToBase64(identity.privateKey),
   }, null, 2);
 
-  const escaped = data.replace(/'/g, "'\\''");
+  // Use base64 encoding to safely pass arbitrary data through shell,
+  // avoiding fragile single-quote escaping that breaks on special chars.
+  const b64 = Buffer.from(data).toString("base64");
   const filePath = identityFilePath();
-  await sendExec(`mkdir -p '${projectRoot}/.fledge' && printf '%s' '${escaped}' > '${filePath}' && chmod 600 '${filePath}'`);
+  await sendExec(`mkdir -p '${projectRoot}/.fledge' && printf '%s' '${b64}' | base64 -d > '${filePath}' && chmod 600 '${filePath}'`);
 
   sendLog("info", `Memory identity created: ${identity.address.substring(0, 8)}...`);
   cachedIdentity = identity;

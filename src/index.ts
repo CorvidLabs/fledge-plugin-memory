@@ -106,6 +106,12 @@ async function cmdSave(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
     sendError("Usage: fledge memory save --key <k> --value <v> [--tier ...] [--ttl <hours>]");
     process.exit(1);
   }
+  if (args.ttl !== undefined) {
+    if (!Number.isInteger(args.ttl) || args.ttl <= 0 || args.ttl > 8760) {
+      sendError("Invalid --ttl: must be a positive integer, max 8760 (1 year in hours).");
+      process.exit(1);
+    }
+  }
   const tier = args.tier ?? "ephemeral";
   switch (tier) {
     case "ephemeral":
@@ -234,8 +240,11 @@ async function cmdList(args: ParsedArgs, identity: ReturnType<typeof getOrCreate
       if (m.tier === "ephemeral") {
         const expiry = m.expires_at ? ` expires:${m.expires_at}` : "";
         sendOutput(`ephemeral    ${m.key.padEnd(20)} ${m.updated_at}${expiry}`);
-      } else {
+      } else if (m.tier === "mutable") {
         sendOutput(`mutable      ${m.key.padEnd(20)} ASA:${m.asaId}`);
+      } else if (m.tier === "permanent") {
+        const created = m.created ? ` created:${m.created}` : "";
+        sendOutput(`permanent    ${m.key.padEnd(20)} tx:${m.txid}${created}`);
       }
     }
   }

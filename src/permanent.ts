@@ -43,6 +43,7 @@ export async function permanentSave(key: string, value: string, identity: Identi
 }
 
 const PERMANENT_TOMBSTONE = "permanent-memory-tombstone";
+const RETRY_TIMEOUT_MS = 120_000; // 2-minute absolute wall-clock timeout
 
 interface PermanentEntry {
   key: string;
@@ -110,8 +111,10 @@ async function scanPermanent(
   opts: { lookingFor?: string; expectTombstoneFor?: string; retries?: number } = {},
 ): Promise<PermanentEntry[]> {
   const retries = opts.retries ?? 8;
+  const deadline = Date.now() + RETRY_TIMEOUT_MS;
   let raw: PermanentEntry[] = [];
   for (let attempt = 0; attempt < Math.max(retries, 1); attempt++) {
+    if (Date.now() > deadline) break;
     raw = await scanPermanentRaw(identity);
     let satisfied = true;
     if (opts.lookingFor) {

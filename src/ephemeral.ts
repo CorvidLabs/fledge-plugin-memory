@@ -14,8 +14,16 @@ export async function ensureEphemeral(pluginDir: string): Promise<boolean> {
     return false;
   }
 
-  await sendExec("fledge sql init --path .fledge/data.db 2>/dev/null");
-  await sendExec(`fledge sql migrate --dir '${pluginDir}/migrations'`);
+  const initResult = await sendExec("fledge sql init --path .fledge/data.db 2>/dev/null");
+  if (initResult.code !== 0) {
+    sendLog("warn", `fledge sql init failed (code ${initResult.code}): ${initResult.stderr.trim() || initResult.stdout.trim()}`);
+    return false;
+  }
+  const migrateResult = await sendExec(`fledge sql migrate --dir '${pluginDir}/migrations'`);
+  if (migrateResult.code !== 0) {
+    sendLog("warn", `fledge sql migrate failed (code ${migrateResult.code}): ${migrateResult.stderr.trim() || migrateResult.stdout.trim()}`);
+    return false;
+  }
 
   initialized = true;
   return true;
@@ -27,6 +35,10 @@ function escSql(s: string): string {
 
 async function fledgeSqlQuery(sql: string): Promise<string> {
   const result = await sendExec(`fledge sql query --list ${JSON.stringify(sql)}`);
+  if (result.code !== 0) {
+    const msg = result.stderr.trim() || result.stdout.trim() || "unknown SQL error";
+    throw new Error(`fledge sql query failed (code ${result.code}): ${msg}`);
+  }
   return result.stdout.trim();
 }
 

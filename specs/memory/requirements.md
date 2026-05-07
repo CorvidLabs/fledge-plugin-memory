@@ -21,6 +21,9 @@ spec: memory.spec.md
 
 ## Out of Scope
 
-- Encryption at rest
-- Memory expiration/TTL
 - Cross-project sharing
+
+## Implemented (previously out of scope)
+
+- Encryption at rest (all tiers use ts-algochat NaCl envelope encryption)
+- Memory expiration/TTL (ephemeral tier supports --ttl in hours, default 168h)
