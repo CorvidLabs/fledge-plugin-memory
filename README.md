@@ -88,8 +88,8 @@ All memories are encrypted at rest using ChaCha20-Poly1305 (via [@corvidlabs/ts-
 Your wallet identity (address + encryption keys) is stored in `.fledge/memory-identity.json` within your project directory (mode `0600`). This file survives plugin reinstalls.
 
 - **Ephemeral** memories live in a SQLite database managed by `fledge-plugin-sql`. The database file persists across plugin reinstalls.
-- **Mutable** memories are on-chain ASAs — they persist as long as the Algorand network is running. A `fledge localnet reset` will destroy them.
-- **Permanent** memories are immutable Algorand transactions — they persist as long as the chain exists.
+- **Mutable** memories are on-chain ASAs that persist as long as the Algorand network is running. A `fledge localnet reset` will destroy them.
+- **Permanent** memories are immutable Algorand transactions that persist as long as the chain exists.
 
 **Important:** If you delete `.fledge/memory-identity.json`, a new identity is generated and you will not be able to decrypt existing ephemeral memories. On-chain memories (mutable/permanent) will also be inaccessible since they are tied to the old wallet address.
 
