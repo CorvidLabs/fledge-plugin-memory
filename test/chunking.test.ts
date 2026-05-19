@@ -23,13 +23,19 @@ describe("chunkValue", () => {
     expect(chunks[1].length).toBe(1);
   });
 
-  test("3000-byte input produces 5 chunks of 600 bytes", () => {
+  test("3000-byte input chunks all fit under the cap", () => {
+    // Don't hard-code the chunk count — it depends on MAX_CLEARTEXT_PER_CHUNK
+    // which moves over time as we tune envelope headroom. The invariant
+    // is that (a) every chunk fits, (b) the count is the ceiling of
+    // total / MAX, and (c) round-trip preserves content.
     const v = "a".repeat(3000);
     const chunks = chunkValue(v);
-    expect(chunks.length).toBe(5);
+    const expectedCount = Math.ceil(3000 / MAX_CLEARTEXT_PER_CHUNK);
+    expect(chunks.length).toBe(expectedCount);
     for (const c of chunks) {
       expect(Buffer.byteLength(c, "utf-8")).toBeLessThanOrEqual(MAX_CLEARTEXT_PER_CHUNK);
     }
+    expect(joinChunks(chunks)).toBe(v);
   });
 
   test("round-trip: chunkValue → joinChunks preserves ASCII content", () => {
@@ -79,5 +85,53 @@ describe("needsChunking", () => {
     expect(needsChunking("🌟".repeat(200))).toBe(true);
     // But the same JS .length is 400, well under MAX
     expect("🌟".repeat(200).length).toBe(400);
+  });
+});
+
+describe("envelope-fits invariant", () => {
+  /**
+   * Regression: the previous MAX_CLEARTEXT_PER_CHUNK = 600 produced
+   * envelopes that exceeded Algorand's 1024-byte note cap. This
+   * test simulates the actual envelope shape used in `permanentSave`
+   * with realistic key lengths and asserts each chunked envelope
+   * fits well under 1024.
+   *
+   * The simulated envelope uses an inflated base64 length that
+   * approximates `@corvidlabs/ts-algochat`'s encryption: each
+   * chunk's plaintext expands to roughly `ceil((plaintext + 40) * 4 / 3)`
+   * base64 chars.
+   */
+  function simulateEnvelopeBytes(key: string, chunkPlaintextBytes: number): number {
+    const encryptedBinary = chunkPlaintextBytes + 40; // 24 nonce + 16 MAC
+    const base64Len = Math.ceil(encryptedBinary / 3) * 4;
+    const envelope = JSON.stringify({
+      type: "permanent-memory",
+      key,
+      value: "X".repeat(base64Len),
+      user: "X".repeat(58),
+      created: "2026-05-18T23:55:34.123Z",
+      book: key,
+      page: 999,
+      total: 999,
+    });
+    return Buffer.byteLength(envelope, "utf-8");
+  }
+
+  test("envelope fits 1024 bytes for typical 30-char key", () => {
+    const key = "x".repeat(30);
+    const envBytes = simulateEnvelopeBytes(key, MAX_CLEARTEXT_PER_CHUNK);
+    expect(envBytes).toBeLessThanOrEqual(1024);
+  });
+
+  test("envelope fits 1024 bytes for 60-char key", () => {
+    const key = "x".repeat(60);
+    const envBytes = simulateEnvelopeBytes(key, MAX_CLEARTEXT_PER_CHUNK);
+    expect(envBytes).toBeLessThanOrEqual(1024);
+  });
+
+  test("envelope fits 1024 bytes for 100-char key", () => {
+    const key = "x".repeat(100);
+    const envBytes = simulateEnvelopeBytes(key, MAX_CLEARTEXT_PER_CHUNK);
+    expect(envBytes).toBeLessThanOrEqual(1024);
   });
 });
