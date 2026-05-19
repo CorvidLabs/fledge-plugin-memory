@@ -1,26 +1,54 @@
 /**
  * Chunking for memories that don't fit in a single Algorand note.
  *
- * Algorand caps tx notes at 1024 bytes. Subtract the JSON envelope
- * (~150 bytes with book/page/total fields) and the encryption layer
- * (envelope adds ~40 bytes, base64 inflates by 4/3) and you have
- * ~600 bytes of plaintext per chunk that reliably fit.
+ * Algorand caps tx notes at 1024 bytes. The on-chain envelope is:
  *
- * On save: the caller decides whether to chunk. `chunkValue` splits on
- * a fixed byte boundary; chunks are reassembled in `joinChunks` by
- * sorting on `page` ascending.
+ *   `{"type":"permanent-memory","key":"K","value":"<base64>","user":"<58>","created":"<24>","book":"K","page":N,"total":M}`
  *
- * On recall: callers collect all txs/ASAs for a given key, group by the
- * save's `created` timestamp (one save = one book), require all pages
- * to be present, and concatenate.
+ * JSON syntax + fixed field names take ~100 bytes. The Algorand
+ * address is 58 chars. The ISO-8601 `created` timestamp is 24 chars.
+ * The `book` field duplicates `key`, so its length is counted twice.
+ * `page` + `total` integer fields take up to ~12 chars. That leaves
+ * the encrypted base64 blob with:
+ *
+ *   1024 - 100 - 58 - 24 - (2 * keyLen) - 12 ≈ 830 - 2 * keyLen
+ *
+ * Base64 expands 4/3 and the crypto envelope adds 40 bytes (24-byte
+ * nonce + 16-byte MAC), so for a 30-char key:
+ *
+ *   max base64 ≈ 830 - 60 = 770 chars
+ *   max binary = 770 * 3/4 = 577 bytes
+ *   max plaintext = 577 - 40 = 537 bytes
+ *
+ * `MAX_CLEARTEXT_PER_CHUNK = 480` is set conservatively below this
+ * threshold because (a) keys can run up to ~100 chars in practice
+ * (which matters since `book` doubles them), and (b) UTF-8 multi-byte
+ * codepoints inflate byte count over JS string length.
+ *
+ * **The prior value of 600 was too generous**: real-world keys around
+ * 30 chars produced envelopes that landed at ~1235 bytes — over the
+ * 1024 cap — and `permanentSave`'s post-chunking assertion fired on
+ * every multi-chunk write during a re-import of long memories from
+ * the corvid-agent migration.
+ *
+ * On save: the caller decides whether to chunk. `chunkValue` splits
+ * on a fixed byte boundary; chunks are reassembled in `joinChunks`
+ * by sorting on `page` ascending.
+ *
+ * On recall: callers collect all txs/ASAs for a given key, group by
+ * the save's `created` timestamp (one save = one book), require all
+ * pages to be present, and concatenate.
  */
 
 /**
- * Max plaintext bytes per chunk. Conservative — leaves headroom for
- * UTF-8 multi-byte expansion, envelope JSON, and the encryption
- * envelope overhead in `@corvidlabs/ts-algochat`.
+ * Max plaintext bytes per chunk. See module docstring for the
+ * derivation. Sized to keep the post-encryption envelope under 1024
+ * bytes for keys up to ~120 chars (`book` field doubles the key).
+ * `validateKey` caps at 256, so very long keys may still trigger
+ * `permanentSave`'s 1024-byte assertion — but in practice we see
+ * keys under 60 chars across corvid-agent's 1,000+ memory keyspace.
  */
-export const MAX_CLEARTEXT_PER_CHUNK = 600;
+export const MAX_CLEARTEXT_PER_CHUNK = 400;
 
 /**
  * Split `value` into N chunks of at most `MAX_CLEARTEXT_PER_CHUNK`
