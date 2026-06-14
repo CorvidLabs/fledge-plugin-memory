@@ -3,14 +3,35 @@ name: test
 on:
   push:
     branches: [main]
+    paths:
+      - src/**
+      - test/**
+      - hooks/**
+      - migrations/**
+      - package.json
+      - tsconfig.json
+      - .github/workflows/test.yml
   pull_request:
     branches: [main]
+    paths:
+      - src/**
+      - test/**
+      - hooks/**
+      - migrations/**
+      - package.json
+      - tsconfig.json
+      - .github/workflows/test.yml
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
