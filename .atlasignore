@@ -1,0 +1,14 @@
+# Atlas analyzes real source and specs only.
+# Generated Pages site (also holds the badges this workflow writes).
+docs/
+# Build output and dependencies.
+node_modules/
+dist/
+bin/
+target/
+hooks/build.sh
+# Tooling and CI metadata.
+.specsync/
+.github/
+# Tests.
+test/
