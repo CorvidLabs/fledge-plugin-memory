@@ -2,6 +2,8 @@
 
 Three-tier encrypted memory plugin for [fledge](https://github.com/CorvidLabs/fledge). Store agent memories in SQLite (ephemeral), ARC-69 ASAs (mutable), or immutable Algorand transactions (permanent).
 
+![spec coverage](https://img.shields.io/endpoint?url=https://corvidlabs.github.io/fledge-plugin-memory/badges/coverage.json)
+
 ## Install
 
 ```bash
