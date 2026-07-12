@@ -1,11 +1,15 @@
 ---
 module: memory
-version: 1
+version: 2
 status: active
 files:
   - src/index.ts
+  - src/algorand.ts
+  - src/chunking.ts
+  - src/encrypt.ts
   - src/protocol.ts
   - src/ephemeral.ts
+  - src/identity.ts
   - src/mutable.ts
   - src/permanent.ts
 
@@ -21,6 +25,54 @@ depends_on: []
 Three-tier memory system for fledge projects. Provides ephemeral (SQLite), mutable (ARC-69 ASAs), and permanent (on-chain transactions) storage tiers. Each tier offers different persistence, mutability, and cost trade-offs. Uses fledge-v1 `exec` capability to compose with fledge-plugin-sql and fledge-plugin-localnet.
 
 ## Public API
+
+### Exported Functions and Types
+
+| Export | Description |
+|--------|-------------|
+| `getAlgod` | Construct the configured algod client. |
+| `getIndexer` | Construct the configured indexer client. |
+| `checkAlgod` | Verify algod connectivity. |
+| `getSuggestedParams` | Load transaction parameters. |
+| `submitAndWait` | Submit a signed transaction and wait for confirmation. |
+| `ensureFunded` | Ensure an identity has sufficient localnet funds. |
+| `MAX_CLEARTEXT_PER_CHUNK` | Maximum cleartext bytes in one encrypted on-chain chunk. |
+| `chunkValue` | Split a value into ordered chunks. |
+| `joinChunks` | Reassemble ordered chunks. |
+| `needsChunking` | Determine whether a value exceeds one chunk. |
+| `encryptValue` | Encrypt a memory value for its identity. |
+| `decryptValue` | Decrypt an encrypted memory value. |
+| `send` | Emit one fledge-v1 protocol message. |
+| `recv` | Receive one protocol line. |
+| `recvJson` | Receive and parse one JSON response. |
+| `sendOutput` | Emit user-facing output. |
+| `sendError` | Emit an error message. |
+| `sendLog` | Emit a structured log. |
+| `sendExec` | Request host command execution. |
+| `sendStore` | Store a host-managed value. |
+| `sendLoad` | Load a host-managed value. |
+| `sendPrompt` | Request text input. |
+| `sendConfirm` | Request confirmation. |
+| `InitMessage` | Typed fledge-v1 initialization message. |
+| `ensureEphemeral` | Initialize ephemeral persistence and migrations. |
+| `ephemeralSave` | Save an encrypted ephemeral memory. |
+| `ephemeralRecall` | Recall one ephemeral memory. |
+| `ephemeralList` | List ephemeral memories. |
+| `ephemeralDelete` | Delete an ephemeral memory. |
+| `ephemeralSearch` | Search ephemeral memories. |
+| `ephemeralGetRaw` | Load an ephemeral record for promotion. |
+| `Identity` | Persistent memory encryption and on-chain identity. |
+| `initIdentityStorage` | Initialize identity persistence. |
+| `getOrCreateIdentity` | Load or create the project identity. |
+| `mutableSave` | Save an encrypted mutable ARC-69 memory. |
+| `mutableRecall` | Recall a mutable memory. |
+| `mutableList` | List mutable memories. |
+| `mutableDelete` | Delete or retire a mutable memory. |
+| `permanentSave` | Save encrypted permanent transaction-note chunks. |
+| `permanentRecall` | Recall and reassemble a permanent memory. |
+| `permanentList` | List permanent memories. |
+| `permanentDelete` | Reject deletion of permanent memories. |
+| `__test` | Expose deterministic permanent-tier helpers to native tests. |
 
 ### Commands
 
@@ -54,6 +106,9 @@ Three-tier memory system for fledge projects. Provides ephemeral (SQLite), mutab
 8. Mutable tier uses ARC-69 metadata in asset config transaction notes.
 9. Permanent tier uses payment transaction note fields with JSON.
 10. All operations go through fledge-v1 `exec` to call other plugins.
+11. Values are encrypted before storage using the ts-algochat NaCl envelope and decrypted only after retrieval.
+12. Payloads exceeding an on-chain note or metadata limit are split into ordered chunks and reassembled deterministically.
+13. Encryption identity is derived consistently for the current project and never emitted with memory values.
 
 ## Behavioral Examples
 
@@ -95,6 +150,7 @@ $ fledge memory delete --key user-name
 - fledge-plugin-sql (runtime, ephemeral tier -- optional)
 - fledge-plugin-localnet (runtime, mutable/permanent)
 - `algosdk` (ARC-69 ASA construction)
+- `@corvidlabs/ts-algochat` (NaCl envelope encryption)
 - fledge-v1 protocol
 
 ## Change Log
@@ -102,3 +158,4 @@ $ fledge memory delete --key user-name
 | Version | Date | Changes |
 |---------|------|---------|
 | 1 | 2026-05-06 | Initial spec |
+| 2 | 2026-07-12 | Document existing encryption, identity, and on-chain chunking modules during SpecSync 5 adoption. |

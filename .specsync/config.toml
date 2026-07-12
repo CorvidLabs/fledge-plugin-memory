@@ -1,3 +1,4 @@
+# SpecSync 5 configuration
 specs_dir = "specs"
 source_dirs = ["src"]
 exclude_dirs = []

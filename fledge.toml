@@ -1,0 +1,15 @@
+# fledge.toml — project task definitions
+[project]
+name = "fledge-plugin-memory"
+language = "typescript"
+
+[tasks]
+build = "bun run build"
+test = "bun test"
+shellcheck = "shellcheck hooks/build.sh"
+syntax = "bash -n hooks/build.sh"
+manifest = "grep -q 'binary = \"bin/fledge-memory\"' plugin.toml && grep -q 'build = \"hooks/build.sh\"' plugin.toml"
+
+[lanes.verify]
+description = "Build, test, and validate the three-tier memory plugin"
+steps = ["build", "test", "shellcheck", "syntax", "manifest"]
