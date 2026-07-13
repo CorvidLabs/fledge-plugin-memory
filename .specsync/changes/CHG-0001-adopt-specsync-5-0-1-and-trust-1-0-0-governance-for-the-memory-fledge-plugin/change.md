@@ -1,6 +1,6 @@
 ---
 id: CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-memory-fledge-plugin
-state: implementing
+state: accepted
 type: migration
 base_commit: e4f719f95cdd347b916ec3dfe0a257b89c873d35
 ---

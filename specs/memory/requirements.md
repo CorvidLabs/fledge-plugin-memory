@@ -14,6 +14,9 @@ spec: memory.spec.md
 
 All three storage tiers SHALL work independently with graceful degradation when an optional backend is unavailable.
 
+Acceptance Criteria
+- Tier-specific tests exercise ephemeral, persistent, and permanent storage behavior.
+
 ### REQ-memory-002
 
 The ephemeral tier SHALL fall back to the fledge-v1 store capability when the SQL plugin is absent.
