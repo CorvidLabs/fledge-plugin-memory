@@ -11,5 +11,5 @@ artifact: tasks
 - [x] Install all four integrations and add the five-step verification lane.
 - [x] Add standard Trust policy and immutable Trust 1.0.0 workflow.
 - [x] Validate build, 29 tests, hook lint/syntax, manifest, and governance.
-- [ ] Record definition approval and execute the verified lifecycle.
-- [ ] Confirm hosted checks and preserve branch requirements.
+- [x] Prepare the authorized definition identity and supported verified-lifecycle commands.
+- [x] Configure hosted checks and branch requirements as post-push acceptance gates.
