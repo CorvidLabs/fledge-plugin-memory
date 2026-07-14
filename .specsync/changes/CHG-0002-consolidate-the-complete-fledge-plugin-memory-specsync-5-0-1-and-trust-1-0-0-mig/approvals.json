@@ -1,0 +1,19 @@
+{
+  "approvals": [
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784000718,
+      "digest": "dca9da05f4b4a5db6b83ba64edb2b27973049a4d631ed9e27115f01ca30e20de",
+      "note": "Approved portable successor definition covering the exact migration and correction delivery range."
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1784000974,
+      "digest": "96628d5461e3e47d37bab6f64ed843ccf105c19da990476b4cb325739a36c373",
+      "note": "Accepted after native build, 29 tests, ShellCheck, syntax, and manifest verification passed at committed implementation e6d1c62."
+    }
+  ],
+  "reopenings": []
+}

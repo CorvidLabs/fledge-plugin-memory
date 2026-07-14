@@ -1,0 +1,63 @@
+{
+  "approvals": [
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1783955347,
+      "digest": "8af7200996dd7e9034043dffa0c5fff203be99e33c91b39bd3eebf642d2183c4",
+      "note": "Definition approved after current review corrections, exact requirement evidence, and passing native Fledge verification."
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1783955440,
+      "digest": "eca57aff7cfdcf541f140e16973db6eb8ee5fceaf82d62f48250094bd79445de",
+      "note": "Closing approval recorded after successful committed-head native verification with exact requirement evidence."
+    },
+    {
+      "gate": "acceptance",
+      "actor": "user:0xLeif",
+      "timestamp": 1784001094,
+      "digest": "e8002d2ad0643aedca18daa57230b5a04044a142d34adf242d565bc7b9f0cf78",
+      "note": "Fresh closing approval after native verification passed at committed successor history 1690b82; accepted definition and Memory semantics remain unchanged."
+    }
+  ],
+  "reopenings": [
+    {
+      "schema_version": 1,
+      "change_id": "CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-memory-fledge-plugin",
+      "actor": "user:0xLeif",
+      "reason": "Review corrections to governed Fledge lane and Gemini integration paths made the prior accepted verification stale; refresh evidence without changing the approved definition or Memory semantics.",
+      "timestamp": 1784001083,
+      "from_state": "accepted",
+      "to_state": "verifying",
+      "superseded_approval": {
+        "gate": "acceptance",
+        "actor": "user:0xLeif",
+        "timestamp": 1783955440,
+        "digest": "eca57aff7cfdcf541f140e16973db6eb8ee5fceaf82d62f48250094bd79445de",
+        "note": "Closing approval recorded after successful committed-head native verification with exact requirement evidence."
+      },
+      "prior_verification": {
+        "timestamp": 1783955374,
+        "commit": "19e381b7524421989699ed3310cd61534236813c",
+        "contract_digest": "8af7200996dd7e9034043dffa0c5fff203be99e33c91b39bd3eebf642d2183c4",
+        "workspace_digest": "4c6a594e2321edba79bfdc4fe3b5c53fddbdadbe074448686a9cdca75596b7d7",
+        "acceptance_input_digest": "e21f35c9cbedb8a402f761ac77ef016f34f430554ab6cf22ecae7296d8c1da95",
+        "passed": true,
+        "commands": [
+          {
+            "command": "fledge lanes run verify",
+            "success": true,
+            "exit_code": 0
+          }
+        ],
+        "requirement_ids": [
+          "REQ-memory-001"
+        ]
+      },
+      "stale_acceptance_input_digest": "e21f35c9cbedb8a402f761ac77ef016f34f430554ab6cf22ecae7296d8c1da95",
+      "current_acceptance_input_digest": "c8dc27a232a42ebf0cb37a56745f59aa78dd7755b886ad8a15812f712f3e2fa4"
+    }
+  ]
+}

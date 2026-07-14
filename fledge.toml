@@ -1,0 +1,20 @@
+# fledge.toml — project task definitions
+[project]
+name = "fledge-plugin-memory"
+language = "typescript"
+
+[tasks]
+build = "bun run build"
+test = "bun test"
+shellcheck = "shellcheck hooks/build.sh"
+syntax = "bash -n hooks/build.sh"
+manifest = "grep -q 'binary = \"bin/fledge-memory\"' plugin.toml && grep -q 'build = \"hooks/build.sh\"' plugin.toml"
+specsync = "specsync check --strict --require-coverage 100 --force"
+
+[lanes.verify]
+description = "Build, test, and validate the three-tier memory plugin"
+steps = ["build", "test", "shellcheck", "syntax", "manifest"]
+
+[lanes.ci]
+description = "Run native verification and the strict SpecSync contract gate"
+steps = ["build", "test", "shellcheck", "syntax", "manifest", "specsync"]
