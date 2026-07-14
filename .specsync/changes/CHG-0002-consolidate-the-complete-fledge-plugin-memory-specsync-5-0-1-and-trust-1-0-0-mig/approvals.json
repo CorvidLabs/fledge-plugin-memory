@@ -1,0 +1,12 @@
+{
+  "approvals": [
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1784000718,
+      "digest": "dca9da05f4b4a5db6b83ba64edb2b27973049a4d631ed9e27115f01ca30e20de",
+      "note": "Approved portable successor definition covering the exact migration and correction delivery range."
+    }
+  ],
+  "reopenings": []
+}
