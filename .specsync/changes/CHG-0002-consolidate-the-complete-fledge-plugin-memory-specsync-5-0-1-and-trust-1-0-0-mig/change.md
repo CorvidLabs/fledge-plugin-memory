@@ -1,6 +1,6 @@
 ---
 id: CHG-0002-consolidate-the-complete-fledge-plugin-memory-specsync-5-0-1-and-trust-1-0-0-mig
-state: verifying
+state: accepted
 type: migration
 base_commit: 0924825732e50308f0e97a9bcf63ed2e2435d737
 ---

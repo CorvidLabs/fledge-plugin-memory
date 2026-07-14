@@ -5,10 +5,11 @@
   "title": "Consolidate the complete fledge-plugin-memory SpecSync 5.0.1 and Trust 1.0.0 migration with portable final evidence",
   "description": "Consolidate the complete fledge-plugin-memory SpecSync 5.0.1 and Trust 1.0.0 migration with portable final evidence",
   "kind": "migration",
-  "state": "verifying",
+  "state": "accepted",
+  "canonical_applied": true,
   "base_commit": "0924825732e50308f0e97a9bcf63ed2e2435d737",
   "created_at": 1784000661,
-  "updated_at": 1784000923,
+  "updated_at": 1784000974,
   "affected_specs": [
     "memory"
   ],
